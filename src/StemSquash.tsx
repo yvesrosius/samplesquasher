@@ -1,5 +1,9 @@
 import React, { Component, createRef } from 'react';
 import { css } from './css';
+import { renderTrackWav } from './audio';
+import { makeZip, downloadBlob, type ZipEntry } from './zip';
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /* ============================================================================
  * Stem Squash — Octatrack Stem Consolidator
@@ -69,6 +73,7 @@ interface State {
   exportOpen: boolean;
   exportPhase: ExportPhase;
   exportProgress: number;
+  exportError: string | null;
 }
 
 export default class StemSquash extends Component<Props, State> {
@@ -117,6 +122,7 @@ export default class StemSquash extends Component<Props, State> {
       exportOpen: false,
       exportPhase: 'config',
       exportProgress: 0,
+      exportError: null,
     };
   }
 
@@ -358,27 +364,35 @@ export default class StemSquash extends Component<Props, State> {
   }
   openExport() {
     if (this.outputs().length === 0) return;
-    this.setState({ exportOpen: true, exportPhase: 'config' });
+    this.setState({ exportOpen: true, exportPhase: 'config', exportError: null });
   }
   closeExport() {
     clearTimeout(this._exTimer);
     this.setState({ exportOpen: false });
   }
-  runExport() {
+  async runExport() {
     const outs = this.outputs();
     if (!outs.length) return;
-    this.setState({ exportPhase: 'running', exportProgress: 0 });
-    let i = 0;
-    const step = () => {
-      i++;
-      this.setState({ exportProgress: i });
-      if (i < outs.length) {
-        this._exTimer = setTimeout(step, 240);
-      } else {
-        this._exTimer = setTimeout(() => this.setState({ exportPhase: 'done' }), 360);
+    this.setState({ exportPhase: 'running', exportProgress: 0, exportError: null });
+    try {
+      const entries: ZipEntry[] = [];
+      for (let k = 0; k < outs.length; k++) {
+        if (!this.state.exportOpen) return; // modal closed → abort
+        const o = outs[k];
+        const samples = this.state.samples.filter((s) => this.state.links[s.id] === o.id);
+        const wav = await renderTrackWav(samples, this.state.format);
+        const fname = `${this.state.projectName} - ${o.name}.wav`;
+        entries.push({ name: `${this.state.projectName}/${fname}`, data: wav });
+        this.setState({ exportProgress: k + 1 });
+        await sleep(120); // let each tick land visibly
       }
-    };
-    this._exTimer = setTimeout(step, 260);
+      if (!this.state.exportOpen) return;
+      downloadBlob(makeZip(entries), `${this.state.projectName || 'stems'}.zip`);
+      this.setState({ exportPhase: 'done' });
+    } catch (err) {
+      console.error('export failed', err);
+      this.setState({ exportPhase: 'done', exportError: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   /* ---------- view ---------- */
@@ -774,7 +788,11 @@ export default class StemSquash extends Component<Props, State> {
                     <br />
                     ready for Octatrack import
                   </div>
-                  <div style={css('margin-top:14px;font-size:10.5px;color:#3f3f45;font-style:italic;')}>demo export · real WAV rendering is the next step</div>
+                  {st.exportError ? (
+                    <div style={css('margin-top:14px;font-size:10.5px;color:#c98a8a;font-style:italic;')}>export error · {st.exportError}</div>
+                  ) : (
+                    <div style={css('margin-top:14px;font-size:10.5px;color:#3f3f45;font-style:italic;')}>{(st.projectName || 'stems') + '.zip'} downloaded · overlay-mixed & normalized</div>
+                  )}
                   <button onClick={() => this.closeExport()} style={css('margin-top:22px;background:#e9e9ec;border:none;border-radius:7px;color:#0b0b0c;font-size:12.5px;font-weight:600;padding:10px 24px;cursor:pointer;')}>
                     Done
                   </button>

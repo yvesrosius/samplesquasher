@@ -21,17 +21,29 @@ named cleanly so the resulting files import tidily.
   Hats, Cymbals, Bass, Sub, Lead, Pad, Keys, Vocals, FX). An LED lights when a
   track has samples assigned.
 - **Export.** Choose **16-bit / 24-bit / source**, review the exact output files
-  named `<Project> - <Track name>.wav` (overlay-mixed, normalized to −0.3 dB),
-  and run the export.
+  named `<Project> - <Track name>.wav`, and run the export. Each track is
+  rendered for real, entirely in the browser:
+  **decode → overlay-mix → normalize to −0.3 dBFS → WAV encode**, then all the
+  files are packaged into `<Project>.zip` (containing a `<Project>/` folder) and
+  downloaded — ready to unzip onto your Octatrack's CompactFlash.
 
-## Status
+## How the export works
 
-The export is currently a **simulated run** — it shows the full flow and file
-list but does not yet write real WAVs. Real in-browser rendering
-(decode → overlay-mix → normalize → WAV encode → download) is the next step.
+- Sources are decoded through an `OfflineAudioContext`, which resamples every
+  input to a common rate so mixing never has to resample by hand.
+- A track's samples are summed (overlay mix, length = the longest source), then
+  the result is normalized so its peak sits at −0.3 dBFS.
+- The mix is encoded to WAV: **16-bit** or **24-bit** PCM, or **32-bit float**
+  for "source".
+- Files are bundled with a small, dependency-free STORE-method ZIP writer (WAV
+  is already uncompressed, so deflating it would add weight for no real gain).
+- Demo samples (the seeded defaults that have no real audio file) are
+  synthesized deterministically, so an export produces audible content even
+  before you add any of your own files.
 
 This app is a faithful implementation of the **Stem Squash** design handed off
-from [Claude Design](https://claude.ai/design).
+from [Claude Design](https://claude.ai/design), with the export wired up for
+real.
 
 ## Development
 
