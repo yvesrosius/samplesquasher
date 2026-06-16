@@ -54,3 +54,19 @@ npm run preview  # preview the production build
 ```
 
 Built with Vite + React + TypeScript.
+
+## Deployment
+
+The app is a fully static client-side bundle (all audio processing runs in the
+browser), so it deploys to **GitHub Pages**. A workflow at
+`.github/workflows/deploy.yml` builds and publishes on every push to the
+default branch, and the production build is based at `/samplesquasher/` to match
+the project-site URL:
+
+**https://yvesrosius.github.io/samplesquasher/**
+
+The workflow enables Pages automatically (`actions/configure-pages` with
+`enablement: true`). If the first run can't enable it for permission reasons,
+turn it on once under **Settings → Pages → Build and deployment → Source:
+GitHub Actions**, then re-run the workflow.
+
