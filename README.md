@@ -37,9 +37,8 @@ named cleanly so the resulting files import tidily.
   for "source".
 - Files are bundled with a small, dependency-free STORE-method ZIP writer (WAV
   is already uncompressed, so deflating it would add weight for no real gain).
-- Demo samples (the seeded defaults that have no real audio file) are
-  synthesized deterministically, so an export produces audible content even
-  before you add any of your own files.
+- Each added file is decoded once on load to derive its real duration and a
+  real peak waveform; that decoded buffer is cached and reused at export time.
 
 This app is a faithful implementation of the **Stem Squash** design handed off
 from [Claude Design](https://claude.ai/design), with the export wired up for

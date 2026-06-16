@@ -1,6 +1,6 @@
 import React, { Component, createRef } from 'react';
 import { css } from './css';
-import { renderTrackWav } from './audio';
+import { renderTrackWav, analyzeSample, type Bar } from './audio';
 import { makeZip, downloadBlob, type ZipEntry } from './zip';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -13,18 +13,11 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  * it; linked samples sort into their track's group and a patterned connector
  * line is drawn. Export names files `<Project> - <Track name>.wav`.
  *
- * Ported faithfully from the Claude Design handoff (`Stem Squash.dc.html`).
- * The export is a simulated run — real WAV rendering is the next step.
+ * Ported from the Claude Design handoff (`Stem Squash.dc.html`); the export is
+ * fully wired up (decode -> overlay-mix -> normalize -> WAV -> zip download).
  * ==========================================================================*/
 
 const NBSP = ' ';
-
-interface Bar {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
 
 interface Sample {
   id: string;
@@ -56,7 +49,6 @@ type Format = '16' | '24' | 'source';
 interface Props {
   projectName?: string;
   trackSlots?: number;
-  demoSamples?: boolean;
 }
 
 interface State {
@@ -101,18 +93,12 @@ export default class StemSquash extends Component<Props, State> {
     super(props);
     const slots = Math.max(4, Math.min(8, props.trackSlots || 8));
     const tracks: Track[] = [];
-    const seedNames = ['Drums', 'Bass', 'Vocals', '', '', '', '', ''];
-    for (let i = 0; i < slots; i++) tracks.push({ id: 't' + i, name: seedNames[i] || '' });
-    const defs = props.demoSamples === false ? [] : this.makeDefaults();
-    const links: LinkMap =
-      props.demoSamples === false
-        ? {}
-        : { s1: 't0', s2: 't0', s3: 't0', s10: 't1', s11: 't1', s14: 't2' };
+    for (let i = 0; i < slots; i++) tracks.push({ id: 't' + i, name: '' });
     this.state = {
       projectName: props.projectName || 'Untitled Project',
-      samples: defs,
+      samples: [],
       tracks,
-      links,
+      links: {},
       format: '16',
       playing: null,
       playPos: 0,
@@ -127,50 +113,10 @@ export default class StemSquash extends Component<Props, State> {
   }
 
   /* ---------- helpers ---------- */
-  seed(s: string) {
-    let h = 2166136261;
-    for (let i = 0; i < s.length; i++) {
-      h ^= s.charCodeAt(i);
-      h = Math.imul(h, 16777619);
-    }
-    return h >>> 0;
-  }
-  makeBars(name: string): Bar[] {
-    let a = this.seed(name);
-    const rnd = () => {
-      a |= 0;
-      a = (a + 0x6d2b79f5) | 0;
-      let t = Math.imul(a ^ (a >>> 15), 1 | a);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-    const n = 56,
-      slot = 100 / n,
-      w = slot * 0.5,
-      bars: Bar[] = [];
-    for (let i = 0; i < n; i++) {
-      const f = 0.12 + 0.88 * Math.pow(rnd(), 0.85);
-      const h = +(f * 24).toFixed(2);
-      bars.push({ x: +(i * slot + slot * 0.25).toFixed(2), y: +(14 - h / 2).toFixed(2), w: +w.toFixed(2), h });
-    }
-    return bars;
-  }
   fmt(sec: number) {
     const m = Math.floor(sec / 60),
       s = Math.floor(sec % 60);
     return m + ':' + String(s).padStart(2, '0');
-  }
-  mkSample(id: string, name: string, extra?: Partial<Sample>): Sample {
-    const dur = 2 + (this.seed(name) % 3500) / 1000;
-    return Object.assign({ id, name, dur, bars: this.makeBars(name) }, extra || {});
-  }
-  makeDefaults(): Sample[] {
-    const names = [
-      'Kick.wav', 'Snare.wav', 'ClosedHat.wav', 'OpenHat.wav', 'Ride.wav', 'Crash.wav',
-      'Clap.wav', 'Perc_Conga.wav', 'Perc_Shaker.wav', 'Bass_Sub.wav', 'Bass_Mid.wav',
-      'Lead_Saw.wav', 'Pad_Warm.wav', 'Vox_Lead.wav', 'Vox_Harm.wav', 'FX_Riser.wav',
-    ];
-    return names.map((n, i) => this.mkSample('s' + (i + 1), n));
   }
 
   componentDidMount() {
@@ -338,20 +284,24 @@ export default class StemSquash extends Component<Props, State> {
   onAdd(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
-    const add = files.map((f) => {
-      const url = URL.createObjectURL(f);
-      const sm = this.mkSample('s' + ++this._uid, f.name, { url });
-      const au = new Audio();
-      au.preload = 'metadata';
-      au.onloadedmetadata = () => {
-        if (au.duration && isFinite(au.duration))
-          this.setState((st) => ({ samples: st.samples.map((x) => (x.id === sm.id ? { ...x, dur: au.duration } : x)) }));
-      };
-      au.src = url;
-      return sm;
-    });
+    const add: Sample[] = files.map((f) => ({
+      id: 's' + ++this._uid,
+      name: f.name,
+      dur: 0,
+      bars: [],
+      url: URL.createObjectURL(f),
+    }));
     this.setState((st) => ({ samples: [...st.samples, ...add] }));
     e.target.value = '';
+    // Decode each file once (cached + reused by export) to get its real
+    // duration and a real peak waveform.
+    add.forEach((sm) => {
+      analyzeSample(sm)
+        .then(({ dur, bars }) =>
+          this.setState((st) => ({ samples: st.samples.map((x) => (x.id === sm.id ? { ...x, dur, bars } : x)) })),
+        )
+        .catch((err) => console.error('could not analyze', sm.name, err));
+    });
   }
 
   outputs() {

@@ -20,6 +20,13 @@ export interface SampleAudio {
   url?: string;
 }
 
+export interface Bar {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export type Format = '16' | '24' | 'source';
 
 /** Target peak for normalization: −0.3 dBFS. */
@@ -37,57 +44,49 @@ function engineCtx(): OfflineAudioContext {
 
 const cache = new Map<string, AudioBuffer>();
 
-function seed(s: string) {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-/** Deterministic percussive/tonal buffer for demo samples that have no file. */
-function synth(ctx: OfflineAudioContext, sample: SampleAudio): AudioBuffer {
-  const sr = ctx.sampleRate;
-  const len = Math.max(1, Math.floor((sample.dur || 1) * sr));
-  const buf = ctx.createBuffer(1, len, sr);
-  const d = buf.getChannelData(0);
-  let a = seed(sample.name) || 1;
-  const rnd = () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  const freq = 60 + rnd() * 340;
-  const decay = 3 + rnd() * 6;
-  for (let i = 0; i < len; i++) {
-    const t = i / sr;
-    const env = Math.exp(-t * decay);
-    const tone = Math.sin(2 * Math.PI * freq * t);
-    const noise = rnd() * 2 - 1;
-    d[i] = (tone * 0.6 + noise * 0.4) * env * 0.7;
-  }
-  return buf;
-}
-
 async function decodeSample(ctx: OfflineAudioContext, sample: SampleAudio): Promise<AudioBuffer> {
   const hit = cache.get(sample.id);
   if (hit) return hit;
+  if (!sample.url) throw new Error(`No audio source for "${sample.name}"`);
   let buf: AudioBuffer;
-  if (sample.url) {
-    try {
-      const ab = await (await fetch(sample.url)).arrayBuffer();
-      buf = await ctx.decodeAudioData(ab);
-    } catch {
-      buf = synth(ctx, sample);
-    }
-  } else {
-    buf = synth(ctx, sample);
+  try {
+    const ab = await (await fetch(sample.url)).arrayBuffer();
+    buf = await ctx.decodeAudioData(ab);
+  } catch {
+    throw new Error(`Could not decode "${sample.name}"`);
   }
   cache.set(sample.id, buf);
   return buf;
+}
+
+/** Peak-summary waveform: `n` bars sized to fit the design's 100×28 viewBox. */
+function peaksToBars(buf: AudioBuffer, n: number): Bar[] {
+  const ch = buf.getChannelData(0);
+  const len = buf.length;
+  const slot = 100 / n;
+  const w = slot * 0.5;
+  const block = Math.max(1, Math.floor(len / n));
+  const bars: Bar[] = [];
+  for (let i = 0; i < n; i++) {
+    let peak = 0;
+    const start = i * block;
+    const end = Math.min(len, start + block);
+    for (let j = start; j < end; j++) {
+      const a = Math.abs(ch[j]);
+      if (a > peak) peak = a;
+    }
+    const f = Math.max(0.04, Math.min(1, peak));
+    const h = +(f * 24).toFixed(2);
+    bars.push({ x: +(i * slot + slot * 0.25).toFixed(2), y: +(14 - h / 2).toFixed(2), w: +w.toFixed(2), h });
+  }
+  return bars;
+}
+
+/** Decode a sample (cached for reuse by export) to get its real duration + waveform. */
+export async function analyzeSample(sample: SampleAudio): Promise<{ dur: number; bars: Bar[] }> {
+  const ctx = engineCtx();
+  const buf = await decodeSample(ctx, sample);
+  return { dur: buf.length / buf.sampleRate, bars: peaksToBars(buf, 56) };
 }
 
 function mixBuffers(ctx: OfflineAudioContext, bufs: AudioBuffer[]): AudioBuffer {
