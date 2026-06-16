@@ -1,4 +1,4 @@
-import React, { Component, createRef } from 'react';
+import React, { Component, createRef, memo } from 'react';
 import { css } from './css';
 import { renderTrackWav, analyzeSample, type Bar } from './audio';
 import { makeZip, downloadBlob, type ZipEntry } from './zip';
@@ -9,15 +9,31 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  * Stem Squash — Octatrack Stem Consolidator
  *
  * A dark, monochrome desktop tool for collapsing many DAW stems onto the
- * Octatrack's 7–8 tracks. Drag a sample's connector dot onto a track to link
- * it; linked samples sort into their track's group and a patterned connector
- * line is drawn. Export names files `<Project> - <Track name>.wav`.
+ * Octatrack's 7–8 tracks. Drag a sample card onto a track to link it; samples
+ * linked to the same track collapse into one foldable group and a patterned
+ * connector line is drawn. Export names files `<Project> - <Track name>.wav`.
  *
- * Ported from the Claude Design handoff (`Stem Squash.dc.html`); the export is
- * fully wired up (decode -> overlay-mix -> normalize -> WAV -> zip download).
+ * Ported from the Claude Design handoff; the export is fully wired up
+ * (decode -> overlay-mix -> normalize -> WAV -> zip download).
  * ==========================================================================*/
 
-const NBSP = ' ';
+const NBSP = ' ';
+
+/* ---- monochrome palette (higher-contrast B/W) ---- */
+const C = {
+  bg: '#09090a',
+  panel: '#101012',
+  gutter: '#070708',
+  card: '#171719',
+  cardHi: '#212126',
+  border: '#34343c',
+  borderSoft: '#26262c',
+  text: '#f5f5f7',
+  text2: '#c2c2c9',
+  text3: '#9a9aa2',
+  muted: '#74747c',
+  faint: '#4e4e56',
+};
 
 interface Sample {
   id: string;
@@ -56,10 +72,12 @@ interface State {
   samples: Sample[];
   tracks: Track[];
   links: LinkMap;
+  collapsed: Record<string, boolean>;
+  masterTrack: boolean;
   format: Format;
   playing: string | null;
   playPos: number;
-  drag: { sampleId: string; x: number; y: number } | null;
+  drag: { sampleId: string; x: number; y: number; moved: boolean } | null;
   overTrack: string | null;
   linkPaths: PathSeg[];
   exportOpen: boolean;
@@ -68,13 +86,150 @@ interface State {
   exportError: string | null;
 }
 
+/* ---------------------------------------------------------------------------
+ * Small presentational helpers
+ * ------------------------------------------------------------------------- */
+
+function PlayGlyph({ playing }: { playing: boolean }) {
+  return playing ? (
+    <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+      <rect x="1.5" y="1.5" width="7" height="7" rx="1" fill="currentColor" />
+    </svg>
+  ) : (
+    <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+      <path d="M2.5 1.4 L8.6 5 L2.5 8.6 Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+ * Sample row — memoized so playback / drag only repaints the affected row,
+ * not every sample. Callbacks are stable class methods keyed by id.
+ * ------------------------------------------------------------------------- */
+interface RowProps {
+  id: string;
+  name: string;
+  time: string;
+  bars: Bar[];
+  loading: boolean;
+  linked: boolean;
+  playing: boolean;
+  playPos: number;
+  isDragSrc: boolean;
+  shade: string;
+  onPlay: (id: string) => void;
+  onScrub: (id: string, frac: number) => void;
+  onDragStart: (id: string, e: React.MouseEvent) => void;
+  onUnlink: (id: string) => void;
+}
+
+const SampleRow = memo(function SampleRow(p: RowProps) {
+  const waveBase = p.linked ? '#5c5c64' : '#7a7a83';
+  const wavePlayed = '#ffffff';
+  const headX = +(p.playPos * 100).toFixed(2);
+
+  const scrub = (e: React.MouseEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    p.onScrub(p.id, frac);
+  };
+
+  return (
+    <div
+      className="ss-unfold"
+      onMouseDown={(e) => p.onDragStart(p.id, e)}
+      style={css(
+        `display:flex;align-items:center;gap:12px;padding:9px 10px;border-radius:9px;margin-bottom:6px;cursor:grab;` +
+          `background:${p.isDragSrc ? C.cardHi : C.card};border:1px solid ${p.isDragSrc ? '#ffffff' : C.border};` +
+          `box-shadow:${p.isDragSrc ? '0 6px 18px rgba(0,0,0,0.5)' : 'none'};transition:background .1s,border-color .1s;`,
+      )}
+    >
+      {/* play / stop */}
+      <button
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          p.onPlay(p.id);
+        }}
+        title="Preview"
+        style={css(
+          `flex:0 0 auto;width:30px;height:30px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;` +
+            `border:1px solid ${p.playing ? '#ffffff' : '#46464e'};background:${p.playing ? '#ffffff' : 'transparent'};color:${p.playing ? '#0a0a0b' : C.text2};`,
+        )}
+      >
+        <PlayGlyph playing={p.playing} />
+      </button>
+
+      <div style={css('flex:1;min-width:0;')}>
+        <div style={css('display:flex;align-items:baseline;gap:8px;')}>
+          <span style={css(`font-size:13px;color:${C.text};font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`)}>{p.name}</span>
+          <div style={css('flex:1;')}></div>
+          <span style={css(`font-family:ui-monospace,monospace;font-size:10px;color:${C.muted};flex:0 0 auto;`)}>{p.time}</span>
+        </div>
+
+        {/* waveform + scrubber */}
+        <div
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            scrub(e);
+          }}
+          onMouseMove={(e) => {
+            // Only seek-on-drag once this sample is the one playing, so dragging
+            // across an idle waveform doesn't restart playback on every move.
+            if (p.playing && e.buttons === 1) scrub(e);
+          }}
+          title="Click or drag to scrub"
+          style={css('margin-top:6px;height:30px;cursor:pointer;position:relative;')}
+        >
+          <svg viewBox="0 0 100 30" preserveAspectRatio="none" className={p.loading ? 'ss-loading' : undefined} style={css('width:100%;height:30px;display:block;')}>
+            <rect x={0} y={14.7} width={100} height={0.6} fill={waveBase} opacity={0.35} />
+            {p.bars.map((b, bi) => (
+              <rect key={bi} x={b.x} y={b.y} width={b.w} height={b.h} rx={0.4} fill={p.playing && b.x <= headX ? wavePlayed : waveBase} />
+            ))}
+            {p.loading && p.bars.length === 0 && (
+              <rect x={0} y={13} width={100} height={4} rx={1} fill={waveBase} />
+            )}
+            {p.playing && <rect x={headX} y={0} width={0.8} height={30} fill="#ffffff" />}
+          </svg>
+        </div>
+      </div>
+
+      {/* connection handle / unlink */}
+      <div style={css('display:flex;flex-direction:column;align-items:center;gap:7px;flex:0 0 auto;padding-left:2px;')}>
+        <div
+          data-dot={'s:' + p.id}
+          title="Drag the card onto a track to link"
+          style={css(
+            `width:13px;height:13px;border-radius:50%;border:1.5px solid ${p.linked || p.isDragSrc ? '#ffffff' : '#6a6a72'};` +
+              `background:${p.linked ? p.shade : p.isDragSrc ? '#ffffff' : 'transparent'};`,
+          )}
+        ></div>
+        {p.linked && (
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              p.onUnlink(p.id);
+            }}
+            title="Unlink"
+            style={css(`width:15px;height:15px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:${C.text3};font-size:13px;cursor:pointer;line-height:1;`)}
+          >
+            ×
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
 export default class StemSquash extends Component<Props, State> {
   rootRef = createRef<HTMLDivElement>();
   fileRef = createRef<HTMLInputElement>();
 
   private _uid = 100;
   private readonly DASH = ['', '7 5', '1.5 5', '10 5 1.5 5', '4 4', '12 6 2 6', '2.5 4', '9 4 2.5 4'];
-  private readonly SHADE = ['#f3f3f5', '#c4c4ca', '#9a9aa1', '#dcdce0', '#b0b0b7', '#86868d', '#e6e6ea', '#a8a8ae'];
+  // Higher-contrast greys for the per-track wayfinding system (kept strictly B/W).
+  private readonly SHADE = ['#ffffff', '#c8c8d0', '#9c9ca5', '#e6e6ec', '#b4b4be', '#8c8c95', '#d6d6dd', '#a6a6b0'];
 
   private _onMove!: (e: MouseEvent) => void;
   private _onUp!: () => void;
@@ -99,6 +254,8 @@ export default class StemSquash extends Component<Props, State> {
       samples: [],
       tracks,
       links: {},
+      collapsed: {},
+      masterTrack: false,
       format: '16',
       playing: null,
       playPos: 0,
@@ -118,6 +275,12 @@ export default class StemSquash extends Component<Props, State> {
       s = Math.floor(sec % 60);
     return m + ':' + String(s).padStart(2, '0');
   }
+  masterIndex() {
+    return this.state.masterTrack ? this.state.tracks.length - 1 : -1;
+  }
+  isMaster(i: number) {
+    return i === this.masterIndex();
+  }
 
   componentDidMount() {
     this._onMove = (e: MouseEvent) => {
@@ -125,7 +288,7 @@ export default class StemSquash extends Component<Props, State> {
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const card = el && (el as Element).closest && (el as Element).closest('[data-track]');
       const ot = card ? card.getAttribute('data-track') : null;
-      this.setState({ drag: { ...this.state.drag, x: e.clientX, y: e.clientY }, overTrack: ot });
+      this.setState({ drag: { ...this.state.drag, x: e.clientX, y: e.clientY, moved: true }, overTrack: ot });
     };
     this._onUp = () => {
       if (!this.state.drag) return;
@@ -159,6 +322,8 @@ export default class StemSquash extends Component<Props, State> {
       l: this.state.links,
       n: this.state.tracks.map((t) => t.name),
       o: this.state.samples.map((s) => s.id),
+      c: this.state.collapsed,
+      m: this.state.masterTrack,
       d: this.state.drag ? [Math.round(this.state.drag.x), Math.round(this.state.drag.y)] : 0,
     });
     if (sig !== this._layoutSig) {
@@ -182,6 +347,9 @@ export default class StemSquash extends Component<Props, State> {
     const mx = (a.x + b.x) / 2;
     return `M ${a.x} ${a.y} C ${mx} ${a.y} ${mx} ${b.y} ${b.x} ${b.y}`;
   }
+  groupCollapsed(tid: string, len: number) {
+    return len > 1 && (this.state.collapsed[tid] ?? true);
+  }
   measure() {
     const root = this.rootRef.current;
     if (!root) return;
@@ -194,19 +362,35 @@ export default class StemSquash extends Component<Props, State> {
       c[el.getAttribute('data-dot')!] = { x: r.left + r.width / 2 - o.left, y: r.top + r.height / 2 - o.top };
     });
     const paths: PathSeg[] = [];
+    const masterIdx = this.masterIndex();
+    // group samples per track so collapsed groups draw a single connector
+    const perTrack: Record<string, string[]> = {};
     for (const sid in this.state.links) {
       const tid = this.state.links[sid];
-      const a = c['s:' + sid],
-        b = c['t:' + tid];
-      if (!a || !b) continue;
-      const i = this.trackIndex(tid);
-      paths.push({ id: sid, d: this.curve(a, b), stroke: this.SHADE[i % 8], width: 1.4, dash: this.DASH[i % 8], opacity: 0.92 });
+      const ti = this.trackIndex(tid);
+      if (ti < 0 || ti === masterIdx) continue;
+      (perTrack[tid] = perTrack[tid] || []).push(sid);
     }
-    if (this.state.drag) {
+    for (const tid in perTrack) {
+      const sids = perTrack[tid];
+      const i = this.trackIndex(tid);
+      const b = c['t:' + tid];
+      if (!b) continue;
+      const seg = (a: { x: number; y: number } | undefined, key: string) => {
+        if (!a) return;
+        paths.push({ id: key, d: this.curve(a, b), stroke: this.SHADE[i % 8], width: 1.5, dash: this.DASH[i % 8], opacity: 0.95 });
+      };
+      if (this.groupCollapsed(tid, sids.length)) {
+        seg(c['g:' + tid], 'g:' + tid);
+      } else {
+        sids.forEach((sid) => seg(c['s:' + sid], sid));
+      }
+    }
+    if (this.state.drag && this.state.drag.moved) {
       const a = c['s:' + this.state.drag.sampleId];
       if (a) {
         const cur = { x: this.state.drag.x - o.left, y: this.state.drag.y - o.top };
-        paths.push({ id: '__drag', d: this.curve(a, cur), stroke: '#ffffff', width: 1.4, dash: '4 4', opacity: 0.9 });
+        paths.push({ id: '__drag', d: this.curve(a, cur), stroke: '#ffffff', width: 1.6, dash: '4 4', opacity: 0.95 });
       }
     }
     const psig = JSON.stringify(paths);
@@ -216,65 +400,85 @@ export default class StemSquash extends Component<Props, State> {
     }
   }
 
-  /* ---------- interactions ---------- */
-  startDrag(sid: string, e: React.MouseEvent) {
+  /* ---------- interactions (stable arrow methods for memoized rows) ---------- */
+  startDrag = (sid: string, e: React.MouseEvent) => {
     e.preventDefault();
-    e.stopPropagation();
-    this.setState({ drag: { sampleId: sid, x: e.clientX, y: e.clientY }, overTrack: null });
-  }
-  unlink(sid: string) {
+    this.setState({ drag: { sampleId: sid, x: e.clientX, y: e.clientY, moved: false }, overTrack: null });
+  };
+  unlink = (sid: string) => {
     this.setState((st) => {
       const links = { ...st.links };
       delete links[sid];
       return { links };
     });
-  }
+  };
+  toggleCollapse = (tid: string) => {
+    this.setState((st) => ({ collapsed: { ...st.collapsed, [tid]: !(st.collapsed[tid] ?? true) } }));
+  };
   setTrackName(id: string, v: string) {
     this.setState((st) => ({ tracks: st.tracks.map((t) => (t.id === id ? { ...t, name: v } : t)) }));
   }
+  toggleMaster = () => {
+    this.setState((st) => ({ masterTrack: !st.masterTrack }));
+  };
 
-  play(id: string) {
+  play = (id: string, startFrac = 0) => {
     const cur = this.state.playing;
     this.stopAudio();
-    if (cur === id) {
+    if (cur === id && !startFrac) {
       this.setState({ playing: null, playPos: 0 });
       return;
     }
     const s = this.state.samples.find((x) => x.id === id);
     if (!s) return;
+    this._pDur = Math.max(400, s.dur * 1000);
     if (s.url) {
       try {
-        this._audio = new Audio(s.url);
-        this._audio.play().catch(() => {});
-        this._audio.onended = () => {
-          this.setState({ playing: null, playPos: 0 });
+        const audio = new Audio(s.url);
+        this._audio = audio;
+        const begin = () => {
+          if (startFrac > 0) audio.currentTime = startFrac * (audio.duration || s.dur || 1);
+          audio.play().catch(() => {});
         };
-      } catch (e) {
+        if (audio.readyState >= 1) begin();
+        else audio.onloadedmetadata = begin;
+        audio.onended = () => this.setState({ playing: null, playPos: 0 });
+      } catch {
         /* ignore */
       }
     }
-    this._pStart = performance.now();
-    this._pDur = Math.max(400, s.dur * 1000);
-    this.setState({ playing: id, playPos: 0 });
+    this._pStart = performance.now() - startFrac * this._pDur;
+    this.setState({ playing: id, playPos: startFrac });
     this._tick();
-  }
-  _tick() {
+  };
+  scrub = (id: string, frac: number) => {
+    if (this.state.playing === id && this._audio) {
+      this._audio.currentTime = frac * (this._audio.duration || this._pDur / 1000 || 1);
+      this._pStart = performance.now() - frac * this._pDur;
+      this.setState({ playPos: frac });
+    } else {
+      this.play(id, Math.max(0.0001, frac));
+    }
+  };
+  _tick = () => {
     if (this.state.playing == null) return;
-    const t = (performance.now() - this._pStart) / this._pDur;
+    let t: number;
+    if (this._audio && this._audio.duration) t = this._audio.currentTime / this._audio.duration;
+    else t = (performance.now() - this._pStart) / this._pDur;
     if (t >= 1) {
       this.stopAudio();
       this.setState({ playing: null, playPos: 0 });
       return;
     }
     this.setState({ playPos: t });
-    this._playRaf = requestAnimationFrame(() => this._tick());
-  }
+    this._playRaf = requestAnimationFrame(this._tick);
+  };
   stopAudio() {
     cancelAnimationFrame(this._playRaf);
     if (this._audio) {
       try {
         this._audio.pause();
-      } catch (e) {
+      } catch {
         /* ignore */
       }
       this._audio = null;
@@ -306,7 +510,9 @@ export default class StemSquash extends Component<Props, State> {
 
   outputs() {
     const out: { id: string; idx: number; name: string; srcCount: number }[] = [];
+    const masterIdx = this.masterIndex();
     this.state.tracks.forEach((t, i) => {
+      if (i === masterIdx) return;
       const src = this.state.samples.filter((s) => this.state.links[s.id] === t.id);
       if (src.length) out.push({ id: t.id, idx: i, name: t.name || 'Track ' + (i + 1), srcCount: src.length });
     });
@@ -345,10 +551,16 @@ export default class StemSquash extends Component<Props, State> {
     }
   }
 
+  dashBorder(i: number): string {
+    const d = this.DASH[i % 8];
+    return d === '' ? 'solid' : d.startsWith('1.5') || d.startsWith('2.5') ? 'dotted' : 'dashed';
+  }
+
   /* ---------- view ---------- */
   render() {
     const st = this.state;
     const drag = st.drag;
+    const masterIdx = this.masterIndex();
     const presets = ['Drums', 'Percs', 'Hats', 'Cymbals', 'Bass', 'Sub', 'Lead', 'Pad', 'Keys', 'Vocals', 'FX'];
 
     // ----- left list ordered & grouped -----
@@ -356,88 +568,53 @@ export default class StemSquash extends Component<Props, State> {
     const unassigned: Sample[] = [];
     st.samples.forEach((s) => {
       const t = st.links[s.id];
-      if (t && this.trackIndex(t) >= 0) (byTrack[t] = byTrack[t] || []).push(s);
+      const ti = this.trackIndex(t);
+      if (t && ti >= 0 && ti !== masterIdx) (byTrack[t] = byTrack[t] || []).push(s);
       else unassigned.push(s);
     });
 
-    const groups: { label: string; color: string; tid: string | null; idx?: number; list: Sample[] }[] = [];
+    interface Group {
+      label: string;
+      name: string;
+      color: string;
+      tid: string | null;
+      idx: number;
+      list: Sample[];
+    }
+    const groups: Group[] = [];
     st.tracks.forEach((t, i) => {
+      if (i === masterIdx) return;
       const list = byTrack[t.id];
       if (list && list.length)
-        groups.push({ label: ('T' + (i + 1) + '  ' + (t.name || 'UNTITLED')).toUpperCase(), color: this.SHADE[i % 8], tid: t.id, idx: i, list });
+        groups.push({ label: 'T' + (i + 1), name: (t.name || 'Untitled').toUpperCase(), color: this.SHADE[i % 8], tid: t.id, idx: i, list });
     });
-    if (unassigned.length) groups.push({ label: 'UNASSIGNED', color: '#56565c', tid: null, list: unassigned });
+    if (unassigned.length) groups.push({ label: 'UNASSIGNED', name: '', color: C.muted, tid: null, idx: -1, list: unassigned });
 
-    interface SampleVM {
-      id: string; name: string; time: string; bars: Bar[]; waveColor: string;
-      playing: boolean; playheadX: number; playGlyph: string;
-      onPlay: () => void; onDotDown: (e: React.MouseEvent) => void; onUnlink: () => void;
-      linked: boolean; header: string | null; headerColor: string; headerCount: string;
-      rowStyle: string; playStyle: string; dotStyle: string;
-    }
-    const samplesView: SampleVM[] = [];
-    groups.forEach((g) => {
-      g.list.forEach((s, idx) => {
-        const linked = g.tid != null;
-        const isDragSrc = !!drag && drag.sampleId === s.id;
-        const playing = st.playing === s.id;
-        samplesView.push({
-          id: s.id,
-          name: s.name,
-          time: this.fmt(s.dur),
-          bars: s.bars,
-          waveColor: linked ? '#6a6a70' : '#48484e',
-          playing,
-          playheadX: +(st.playPos * 100).toFixed(2),
-          playGlyph: playing ? '■' : '▶',
-          onPlay: () => this.play(s.id),
-          onDotDown: (e) => this.startDrag(s.id, e),
-          onUnlink: () => this.unlink(s.id),
-          linked,
-          header: idx === 0 ? g.label : null,
-          headerColor: g.color,
-          headerCount: idx === 0 ? String(g.list.length) : '',
-          rowStyle: `display:flex;align-items:center;gap:12px;padding:9px 8px 9px 10px;border-radius:8px;margin-bottom:3px;background:${isDragSrc ? '#17171a' : 'transparent'};border:1px solid ${isDragSrc ? '#3a3a40' : 'transparent'};transition:background .08s;`,
-          playStyle: `flex:0 0 auto;width:30px;height:30px;border-radius:50%;border:1px solid ${playing ? '#e9e9ec' : '#2e2e33'};background:${playing ? '#e9e9ec' : 'transparent'};color:${playing ? '#0b0b0c' : '#cfcfd4'};font-size:9px;display:flex;align-items:center;justify-content:center;cursor:pointer;padding-left:${playing ? '0' : '1px'};`,
-          dotStyle: `width:13px;height:13px;border-radius:50%;border:1.5px solid ${linked || isDragSrc ? '#e9e9ec' : '#5a5a60'};background:${linked || isDragSrc ? '#e9e9ec' : 'transparent'};cursor:crosshair;`,
-        });
-      });
-    });
-
-    // ----- tracks -----
-    interface TrackVM {
-      id: string; label: string; name: string; idxColor: string;
-      onName: (e: React.ChangeEvent<HTMLInputElement>) => void;
-      onPreset: (e: React.ChangeEvent<HTMLSelectElement>) => void;
-      assigned: { id: string; name: string; onRemove: () => void }[];
-      hasSamples: boolean; empty: boolean; countLabel: string;
-      cardStyle: string; dotStyle: string; ledStyle: string; swatchBorder: string;
-    }
-    const tracksView: TrackVM[] = st.tracks.map((t, i) => {
+    // ----- tracks (right) -----
+    const tracksView = st.tracks.map((t, i) => {
       const assigned = st.samples.filter((s) => st.links[s.id] === t.id);
       const has = assigned.length > 0;
       const hi = !!drag && st.overTrack === t.id;
       const shade = this.SHADE[i % 8];
-      const dashCss = this.DASH[i % 8];
-      const borderStyle = dashCss === '' ? 'solid' : dashCss.startsWith('1.5') || dashCss.startsWith('2.5') ? 'dotted' : 'dashed';
+      const borderStyle = this.dashBorder(i);
       return {
         id: t.id,
+        index: i,
+        master: i === masterIdx,
         label: 'T' + (i + 1),
         name: t.name,
-        idxColor: has ? shade : '#5a5a60',
-        onName: (e) => this.setTrackName(t.id, e.target.value),
-        onPreset: (e) => {
+        idxColor: has ? shade : C.text3,
+        onName: (e: React.ChangeEvent<HTMLInputElement>) => this.setTrackName(t.id, e.target.value),
+        onPreset: (e: React.ChangeEvent<HTMLSelectElement>) => {
           const v = e.target.value;
           if (v) this.setTrackName(t.id, v);
         },
         assigned: assigned.map((s) => ({ id: s.id, name: s.name, onRemove: () => this.unlink(s.id) })),
         hasSamples: has,
-        empty: !has,
-        countLabel: has ? assigned.length + '→ 1' : '—',
-        cardStyle: `position:relative;background:${hi ? '#1a1a1e' : '#141416'};border:1px solid ${hi ? '#e9e9ec' : has ? '#2e2e33' : '#222226'};border-radius:10px;padding:14px 16px 14px 16px;transition:border-color .1s,background .1s;`,
-        dotStyle: `position:absolute;left:-7px;top:18px;width:13px;height:13px;border-radius:50%;border:1.5px solid ${has ? '#e9e9ec' : '#5a5a60'};background:${has ? shade : '#0d0d0f'};`,
-        ledStyle: `width:7px;height:7px;border-radius:50%;background:${has ? '#e9e9ec' : 'transparent'};border:1px solid ${has ? '#e9e9ec' : '#3a3a40'};box-shadow:${has ? '0 0 6px rgba(255,255,255,0.5)' : 'none'};`,
-        swatchBorder: `border-top:1.5px ${borderStyle} ${has ? shade : '#2a2a2e'};`,
+        countLabel: has ? assigned.length + ' → 1' : '—',
+        shade,
+        borderStyle,
+        hi,
       };
     });
 
@@ -450,9 +627,9 @@ export default class StemSquash extends Component<Props, State> {
       return {
         file: `${st.projectName} - ${o.name}.wav`,
         srcLabel: `${o.srcCount} src · ${fmtMeta[st.format]}`,
-        swatch: `flex:0 0 auto;width:24px;height:0;border-top:1.5px ${this.DASH[o.idx % 8] === '' ? 'solid' : this.DASH[o.idx % 8].startsWith('1.5') || this.DASH[o.idx % 8].startsWith('2.5') ? 'dotted' : 'dashed'} ${this.SHADE[o.idx % 8]};`,
-        tick: done ? '✓' : cur ? '·' : '·',
-        tickColor: done ? '#e9e9ec' : cur ? '#9a9aa0' : '#3f3f45',
+        swatch: `flex:0 0 auto;width:24px;height:0;border-top:1.5px ${this.dashBorder(o.idx)} ${this.SHADE[o.idx % 8]};`,
+        tick: done ? '✓' : '·',
+        tickColor: done ? '#ffffff' : cur ? C.text3 : C.faint,
       };
     });
     const fOpt = (key: Format, label: string) => {
@@ -460,53 +637,80 @@ export default class StemSquash extends Component<Props, State> {
       return {
         label,
         onSelect: () => this.setState({ format: key }),
-        style: `background:${a ? '#e9e9ec' : 'transparent'};color:${a ? '#0b0b0c' : '#9a9aa0'};border:none;border-radius:6px;font-size:11.5px;font-weight:${a ? '600' : '400'};padding:6px 13px;cursor:pointer;`,
+        style: `background:${a ? '#ffffff' : 'transparent'};color:${a ? '#0a0a0b' : C.text3};border:none;border-radius:6px;font-size:11.5px;font-weight:${a ? '600' : '400'};padding:6px 13px;cursor:pointer;`,
       };
     };
     const formatOptions = [fOpt('16', '16-bit'), fOpt('24', '24-bit'), fOpt('source', 'Source')];
 
-    const linked = Object.keys(st.links).filter((k) => this.trackIndex(st.links[k]) >= 0).length;
+    const linked = Object.keys(st.links).filter((k) => {
+      const ti = this.trackIndex(st.links[k]);
+      return ti >= 0 && ti !== masterIdx;
+    }).length;
+    const trackCount = st.tracks.length - (st.masterTrack ? 1 : 0);
     const used = outs.length;
     const exportOK = used > 0;
 
     const uiSelect = drag ? 'none' : 'auto';
-    const summary = `${linked}/${st.samples.length} linked  ·  ${used}/${st.tracks.length} tracks`;
+    const summary = `${linked}/${st.samples.length} linked  ·  ${used}/${trackCount} tracks`;
     const exportBtnLabel = exportOK ? `Export → ${used} stems` : 'Export';
-    const exportBtnStyle = `white-space:nowrap;background:${exportOK ? '#e9e9ec' : '#1c1c1f'};color:${exportOK ? '#0b0b0c' : '#56565c'};border:1px solid ${exportOK ? '#e9e9ec' : '#2a2a2e'};border-radius:7px;font-size:12.5px;font-weight:600;padding:9px 16px;cursor:${exportOK ? 'pointer' : 'not-allowed'};`;
-    const runBtnStyle = `background:#e9e9ec;border:none;border-radius:7px;color:#0b0b0c;font-size:12.5px;font-weight:600;padding:9px 18px;cursor:pointer;`;
+    const exportBtnStyle = `white-space:nowrap;background:${exportOK ? '#ffffff' : '#1c1c1f'};color:${exportOK ? '#0a0a0b' : C.muted};border:1px solid ${exportOK ? '#ffffff' : C.borderSoft};border-radius:7px;font-size:12.5px;font-weight:600;padding:9px 16px;cursor:${exportOK ? 'pointer' : 'not-allowed'};`;
+    const runBtnStyle = `background:#ffffff;border:none;border-radius:7px;color:#0a0a0b;font-size:12.5px;font-weight:600;padding:9px 18px;cursor:pointer;`;
 
     return (
       <div
         ref={this.rootRef}
         style={css(
-          `height:100vh;display:flex;flex-direction:column;background:#0b0b0c;color:#e9e9ec;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;user-select:${uiSelect};overflow:hidden;`,
+          `height:100vh;display:flex;flex-direction:column;background:${C.bg};color:${C.text};font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;user-select:${uiSelect};overflow:hidden;`,
         )}
       >
         {/* ============ HEADER ============ */}
-        <header style={css('flex:0 0 auto;height:60px;display:flex;align-items:center;gap:22px;padding:0 22px;border-bottom:1px solid #1f1f22;background:#101012;')}>
+        <header style={css(`flex:0 0 auto;height:60px;display:flex;align-items:center;gap:22px;padding:0 22px;border-bottom:1px solid ${C.borderSoft};background:${C.panel};`)}>
           <div style={css('display:flex;align-items:center;gap:11px;')}>
-            <div style={css('width:26px;height:26px;border:1.5px solid #6c6c72;border-radius:5px;display:flex;align-items:center;justify-content:center;')}>
-              <div style={css('width:11px;height:11px;border-radius:50%;background:#e9e9ec;')}></div>
+            <div style={css('width:26px;height:26px;border:1.5px solid #8a8a92;border-radius:5px;display:flex;align-items:center;justify-content:center;')}>
+              <div style={css('width:11px;height:11px;border-radius:50%;background:#ffffff;')}></div>
             </div>
-            <div style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12px;letter-spacing:2.5px;color:#e9e9ec;")}>STEM{NBSP}SQUASH</div>
+            <div style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12px;letter-spacing:2.5px;color:#ffffff;")}>STEM{NBSP}SQUASH</div>
           </div>
 
-          <div style={css('width:1px;height:26px;background:#26262a;')}></div>
+          <div style={css(`width:1px;height:26px;background:${C.borderSoft};`)}></div>
 
           <label style={css('display:flex;align-items:center;gap:10px;')}>
-            <span style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:9.5px;letter-spacing:1.5px;color:#6c6c72;")}>PROJECT</span>
+            <span style={css(`font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:9.5px;letter-spacing:1.5px;color:${C.muted};`)}>PROJECT</span>
             <input
               value={st.projectName}
               onChange={(e) => this.setState({ projectName: e.target.value })}
               placeholder="Untitled Project"
               spellCheck={false}
-              style={css('background:#0b0b0c;border:1px solid #2a2a2e;border-radius:6px;color:#f2f2f4;font-size:13.5px;font-weight:500;padding:7px 11px;width:230px;outline:none;')}
+              style={css(`background:${C.bg};border:1px solid ${C.border};border-radius:6px;color:${C.text};font-size:13.5px;font-weight:500;padding:7px 11px;width:230px;outline:none;`)}
             />
           </label>
 
           <div style={css('flex:1 1 auto;')}></div>
 
-          <div style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;letter-spacing:0.5px;color:#7a7a80;")}>{summary}</div>
+          {/* T8 master toggle */}
+          <button
+            onClick={this.toggleMaster}
+            title="Use track 8 as the master bus — it is hidden and not exported as a stem"
+            style={css(
+              `display:flex;align-items:center;gap:8px;background:${st.masterTrack ? '#ffffff' : 'transparent'};border:1px solid ${st.masterTrack ? '#ffffff' : C.border};` +
+                `border-radius:7px;padding:7px 11px;cursor:pointer;color:${st.masterTrack ? '#0a0a0b' : C.text3};font-size:11px;letter-spacing:0.3px;`,
+            )}
+          >
+            <span
+              style={css(
+                `width:24px;height:13px;border-radius:7px;position:relative;flex:0 0 auto;background:${st.masterTrack ? '#0a0a0b' : '#2c2c32'};transition:background .12s;`,
+              )}
+            >
+              <span
+                style={css(
+                  `position:absolute;top:2px;left:${st.masterTrack ? '13px' : '2px'};width:9px;height:9px;border-radius:50%;background:#ffffff;transition:left .12s;`,
+                )}
+              ></span>
+            </span>
+            T8 master
+          </button>
+
+          <div style={css(`font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;letter-spacing:0.5px;color:${C.text3};`)}>{summary}</div>
 
           <button onClick={() => this.openExport()} style={css(exportBtnStyle)}>
             {exportBtnLabel}
@@ -523,63 +727,87 @@ export default class StemSquash extends Component<Props, State> {
           </svg>
 
           {/* ===== LEFT : SAMPLES ===== */}
-          <section onScroll={() => this.scheduleMeasure()} className="ss-scroll" style={css('flex:1 1 auto;min-width:400px;overflow-y:auto;background:#0d0d0f;border-right:1px solid #161619;')}>
-            <div style={css('position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:12px;padding:13px 20px 12px 20px;background:#0d0d0f;border-bottom:1px solid #1a1a1d;')}>
-              <span style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:2px;color:#8a8a90;")}>SAMPLES</span>
-              <span style={css('font-family:ui-monospace,monospace;font-size:10px;color:#56565c;')}>{String(st.samples.length)}</span>
+          <section onScroll={() => this.scheduleMeasure()} className="ss-scroll" style={css(`flex:1 1 auto;min-width:400px;overflow-y:auto;background:${C.panel};border-right:1px solid ${C.borderSoft};`)}>
+            <div style={css(`position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:12px;padding:13px 20px 12px 20px;background:${C.panel};border-bottom:1px solid ${C.borderSoft};`)}>
+              <span style={css(`font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:2px;color:${C.text3};`)}>SAMPLES</span>
+              <span style={css(`font-family:ui-monospace,monospace;font-size:10px;color:${C.muted};`)}>{String(st.samples.length)}</span>
               <div style={css('flex:1;')}></div>
-              <button onClick={() => this.fileRef.current && this.fileRef.current.click()} style={css('display:flex;align-items:center;gap:6px;background:transparent;border:1px solid #2c2c30;border-radius:6px;color:#cfcfd4;font-size:11.5px;padding:6px 11px;cursor:pointer;')}>
+              <button onClick={() => this.fileRef.current && this.fileRef.current.click()} style={css(`display:flex;align-items:center;gap:6px;background:transparent;border:1px solid ${C.border};border-radius:6px;color:${C.text2};font-size:11.5px;padding:6px 11px;cursor:pointer;`)}>
                 + Add files
               </button>
               <input ref={this.fileRef} onChange={(e) => this.onAdd(e)} type="file" accept="audio/*" multiple style={css('display:none;')} />
             </div>
 
-            <div style={css('padding:8px 14px 40px 14px;')}>
-              {samplesView.map((s) => (
-                <div key={s.id}>
-                  {s.header && (
-                    <div style={css('display:flex;align-items:center;gap:9px;padding:14px 6px 7px 6px;')}>
-                      <span style={css(`font-family:ui-monospace,monospace;font-size:9.5px;letter-spacing:1.6px;color:${s.headerColor};`)}>{s.header}</span>
-                      <div style={css('flex:1;height:1px;background:#1c1c20;')}></div>
-                      <span style={css('font-family:ui-monospace,monospace;font-size:9.5px;color:#46464c;')}>{s.headerCount}</span>
-                    </div>
-                  )}
-
-                  <div style={css(s.rowStyle)}>
-                    <button onClick={s.onPlay} title="Preview" style={css(s.playStyle)}>
-                      {s.playGlyph}
-                    </button>
-
-                    <div style={css('flex:1;min-width:0;')}>
-                      <div style={css('display:flex;align-items:baseline;gap:8px;')}>
-                        <span style={css('font-size:13px;color:#ededf0;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;')}>{s.name}</span>
-                        <div style={css('flex:1;')}></div>
-                        <span style={css('font-family:ui-monospace,monospace;font-size:10px;color:#5e5e64;flex:0 0 auto;')}>{s.time}</span>
-                      </div>
-                      <div style={css('margin-top:5px;height:28px;')}>
-                        <svg viewBox="0 0 100 28" preserveAspectRatio="none" style={css('width:100%;height:28px;display:block;')}>
-                          {s.bars.map((b, bi) => (
-                            <rect key={bi} x={b.x} y={b.y} width={b.w} height={b.h} fill={s.waveColor}></rect>
-                          ))}
-                          {s.playing && <rect x={s.playheadX} y={0} width={0.7} height={28} fill="#ffffff"></rect>}
-                        </svg>
-                      </div>
-                    </div>
-
-                    <div style={css('display:flex;flex-direction:column;align-items:center;gap:6px;flex:0 0 auto;padding-left:4px;')}>
-                      <div data-dot={'s:' + s.id} onMouseDown={s.onDotDown} title="Drag to a track" style={css(s.dotStyle)}></div>
-                      {s.linked && (
-                        <div onClick={s.onUnlink} title="Unlink" style={css('width:14px;height:14px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#6c6c72;font-size:12px;cursor:pointer;line-height:1;')}>
-                          ×
-                        </div>
+            <div style={css('padding:10px 14px 40px 14px;')}>
+              {groups.map((g) => {
+                const collapsible = g.tid != null && g.list.length > 1;
+                const collapsed = g.tid != null && this.groupCollapsed(g.tid, g.list.length);
+                return (
+                  <div key={g.tid || 'unassigned'} style={css('margin-bottom:14px;')}>
+                    {/* group header */}
+                    <div
+                      onClick={collapsible ? () => this.toggleCollapse(g.tid!) : undefined}
+                      style={css(`display:flex;align-items:center;gap:9px;padding:4px 6px 9px 6px;${collapsible ? 'cursor:pointer;' : ''}`)}
+                    >
+                      {collapsible && (
+                        <span style={css(`color:${C.text3};font-size:9px;width:10px;display:inline-block;transition:transform .12s;transform:rotate(${collapsed ? 0 : 90}deg);`)}>▶</span>
                       )}
+                      <span style={css(`font-family:ui-monospace,monospace;font-size:9.5px;letter-spacing:1.6px;color:${g.color};`)}>{g.label}</span>
+                      {g.name && <span style={css(`font-family:ui-monospace,monospace;font-size:9.5px;letter-spacing:1.4px;color:${C.text3};`)}>{g.name}</span>}
+                      <div style={css(`flex:1;height:1px;background:${C.borderSoft};`)}></div>
+                      <span style={css(`font-family:ui-monospace,monospace;font-size:9.5px;color:${C.muted};`)}>{String(g.list.length)}</span>
                     </div>
+
+                    {collapsed ? (
+                      /* collapsed stack — one card representing the whole group */
+                      <div
+                        onClick={() => this.toggleCollapse(g.tid!)}
+                        style={css(`position:relative;cursor:pointer;`)}
+                      >
+                        {/* stacked shadows behind */}
+                        <div style={css(`position:absolute;left:6px;right:6px;top:8px;height:46px;border-radius:9px;background:${C.card};border:1px solid ${C.borderSoft};opacity:0.5;`)}></div>
+                        <div style={css(`position:absolute;left:3px;right:3px;top:4px;height:46px;border-radius:9px;background:${C.card};border:1px solid ${C.border};opacity:0.75;`)}></div>
+                        <div style={css(`position:relative;display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:9px;background:${C.card};border:1px solid ${C.border};`)}>
+                          <div style={css(`flex:0 0 auto;width:30px;height:30px;border-radius:8px;border:1px solid ${C.border};display:flex;align-items:center;justify-content:center;font-family:ui-monospace,monospace;font-size:12px;color:${g.color};`)}>
+                            {g.list.length}
+                          </div>
+                          <div style={css('flex:1;min-width:0;')}>
+                            <div style={css(`font-size:13px;color:${C.text};font-weight:500;`)}>{g.list.length} samples squashed</div>
+                            <div style={css(`font-size:11px;color:${C.text3};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;`)}>
+                              {g.list.map((s) => s.name).join(' · ')}
+                            </div>
+                          </div>
+                          <span style={css(`font-size:10.5px;color:${C.text3};flex:0 0 auto;`)}>unfold</span>
+                          <div data-dot={'g:' + g.tid} style={css(`width:13px;height:13px;border-radius:50%;border:1.5px solid #ffffff;background:${g.color};flex:0 0 auto;`)}></div>
+                        </div>
+                      </div>
+                    ) : (
+                      g.list.map((s) => (
+                        <SampleRow
+                          key={s.id}
+                          id={s.id}
+                          name={s.name}
+                          time={this.fmt(s.dur)}
+                          bars={s.bars}
+                          loading={s.bars.length === 0}
+                          linked={g.tid != null}
+                          playing={st.playing === s.id}
+                          playPos={st.playing === s.id ? st.playPos : 0}
+                          isDragSrc={!!drag && drag.sampleId === s.id}
+                          shade={g.color}
+                          onPlay={this.play}
+                          onScrub={this.scrub}
+                          onDragStart={this.startDrag}
+                          onUnlink={this.unlink}
+                        />
+                      ))
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               {st.samples.length === 0 && (
-                <div style={css('text-align:center;color:#46464c;font-size:12.5px;padding:60px 20px;line-height:1.7;')}>
+                <div style={css(`text-align:center;color:${C.text3};font-size:12.5px;padding:60px 20px;line-height:1.7;`)}>
                   No samples loaded.
                   <br />
                   Add your exported stems to begin.
@@ -589,82 +817,108 @@ export default class StemSquash extends Component<Props, State> {
           </section>
 
           {/* gutter */}
-          <div style={css('flex:0 0 132px;background:#08080a;')}></div>
+          <div style={css(`flex:0 0 132px;background:${C.gutter};`)}></div>
 
           {/* ===== RIGHT : TRACKS ===== */}
-          <section onScroll={() => this.scheduleMeasure()} className="ss-scroll" style={css('flex:0 0 452px;overflow-y:auto;background:#0d0d0f;border-left:1px solid #161619;')}>
-            <div style={css('position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:12px;padding:13px 20px 12px 22px;background:#0d0d0f;border-bottom:1px solid #1a1a1d;')}>
-              <span style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:2px;color:#8a8a90;")}>
+          <section onScroll={() => this.scheduleMeasure()} className="ss-scroll" style={css(`flex:0 0 452px;overflow-y:auto;background:${C.panel};border-left:1px solid ${C.borderSoft};`)}>
+            <div style={css(`position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:12px;padding:13px 20px 12px 22px;background:${C.panel};border-bottom:1px solid ${C.borderSoft};`)}>
+              <span style={css(`font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:2px;color:${C.text3};`)}>
                 OCTATRACK{NBSP}·{NBSP}TRACKS
               </span>
               <div style={css('flex:1;')}></div>
-              <span style={css('font-family:ui-monospace,monospace;font-size:10px;color:#56565c;')}>{String(used)} active</span>
+              <span style={css(`font-family:ui-monospace,monospace;font-size:10px;color:${C.muted};`)}>{String(used)} active</span>
             </div>
 
             <div style={css('padding:12px 18px 40px 18px;display:flex;flex-direction:column;gap:11px;')}>
-              {tracksView.map((t) => (
-                <div key={t.id} data-track={t.id} style={css(t.cardStyle)}>
-                  {/* target dot (anchored to left edge, into gutter) */}
-                  <div data-dot={'t:' + t.id} style={css(t.dotStyle)}></div>
+              {tracksView.map((t) =>
+                t.master ? (
+                  /* master bus — disabled, not a drop target, not exported */
+                  <div key={t.id} style={css(`position:relative;background:${C.bg};border:1px dashed ${C.border};border-radius:10px;padding:13px 16px;display:flex;align-items:center;gap:11px;opacity:0.92;`)}>
+                    <span style={css(`font-family:ui-monospace,monospace;font-size:11px;letter-spacing:1px;color:${C.text3};font-weight:600;`)}>{t.label}</span>
+                    <span style={css(`font-family:ui-monospace,monospace;font-size:10px;letter-spacing:2px;color:${C.text2};border:1px solid ${C.border};border-radius:4px;padding:2px 7px;`)}>MASTER</span>
+                    <span style={css(`font-size:11.5px;color:${C.muted};`)}>main output bus · not exported</span>
+                  </div>
+                ) : (
+                  <div
+                    key={t.id}
+                    data-track={t.id}
+                    style={css(
+                      `position:relative;background:${t.hi ? C.cardHi : C.card};border:1px solid ${t.hi ? '#ffffff' : t.hasSamples ? C.border : C.borderSoft};border-radius:10px;padding:14px 16px;transition:border-color .1s,background .1s;`,
+                    )}
+                  >
+                    {/* target dot (anchored to left edge, into gutter) */}
+                    <div
+                      data-dot={'t:' + t.id}
+                      style={css(`position:absolute;left:-7px;top:18px;width:13px;height:13px;border-radius:50%;border:1.5px solid ${t.hasSamples ? '#ffffff' : '#6a6a72'};background:${t.hasSamples ? t.shade : C.bg};`)}
+                    ></div>
 
-                  <div style={css('display:flex;align-items:center;gap:11px;')}>
-                    <div style={css('display:flex;align-items:center;gap:8px;flex:0 0 auto;')}>
-                      <span style={css(`font-family:ui-monospace,monospace;font-size:11px;letter-spacing:1px;color:${t.idxColor};font-weight:600;`)}>{t.label}</span>
-                      <div style={css(t.ledStyle)}></div>
+                    <div style={css('display:flex;align-items:center;gap:11px;')}>
+                      <div style={css('display:flex;align-items:center;gap:8px;flex:0 0 auto;')}>
+                        <span style={css(`font-family:ui-monospace,monospace;font-size:11px;letter-spacing:1px;color:${t.idxColor};font-weight:600;`)}>{t.label}</span>
+                        <div
+                          style={css(
+                            `width:7px;height:7px;border-radius:50%;background:${t.hasSamples ? '#ffffff' : 'transparent'};border:1px solid ${t.hasSamples ? '#ffffff' : C.border};box-shadow:${t.hasSamples ? '0 0 7px rgba(255,255,255,0.6)' : 'none'};`,
+                          )}
+                        ></div>
+                      </div>
+
+                      {/* integrated name + preset control */}
+                      <div style={css(`display:flex;align-items:stretch;flex:1;min-width:0;border:1px solid ${C.border};border-radius:8px;background:${C.bg};overflow:hidden;`)}>
+                        <input
+                          value={t.name}
+                          onChange={t.onName}
+                          placeholder="name this track"
+                          spellCheck={false}
+                          style={css(`flex:1;min-width:0;background:transparent;border:none;color:${C.text};font-size:14px;font-weight:500;padding:8px 11px;outline:none;`)}
+                        />
+                        <div style={css(`width:1px;background:${C.border};`)}></div>
+                        <select value="" onChange={t.onPreset} title="Pick a preset name" style={css(`flex:0 0 auto;background:transparent;border:none;color:${C.text3};font-size:11px;padding:0 9px;outline:none;cursor:pointer;`)}>
+                          <option value="" disabled>
+                            preset ▾
+                          </option>
+                          {presets.map((p) => (
+                            <option key={p} value={p}>
+                              {p}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
 
-                    <input
-                      value={t.name}
-                      onChange={t.onName}
-                      placeholder="name this track"
-                      spellCheck={false}
-                      style={css('flex:1;min-width:0;background:transparent;border:none;border-bottom:1px solid #26262a;color:#f2f2f4;font-size:14px;font-weight:500;padding:4px 2px;outline:none;')}
-                    />
-
-                    <select value="" onChange={t.onPreset} style={css('flex:0 0 auto;background:#141416;border:1px solid #2a2a2e;border-radius:6px;color:#9a9aa0;font-size:11px;padding:6px 7px;outline:none;cursor:pointer;')}>
-                      <option value="" disabled>
-                        preset
-                      </option>
-                      {presets.map((p) => (
-                        <option key={p} value={p}>
-                          {p}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* line-identity + assigned */}
-                  <div style={css('display:flex;align-items:center;gap:10px;margin-top:11px;')}>
-                    <div style={css(`flex:0 0 40px;height:0;${t.swatchBorder}`)}></div>
-                    {t.hasSamples && (
-                      <div style={css('display:flex;flex-wrap:wrap;gap:6px;flex:1;')}>
-                        {t.assigned.map((a) => (
-                          <div key={a.id} style={css('display:flex;align-items:center;gap:6px;background:#141416;border:1px solid #2a2a2e;border-radius:5px;padding:4px 6px 4px 9px;')}>
-                            <span style={css('font-size:11px;color:#cfcfd4;max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;')}>{a.name}</span>
-                            <div onClick={a.onRemove} title="Remove" style={css('color:#5e5e64;font-size:12px;cursor:pointer;line-height:1;')}>
-                              ×
+                    {/* line-identity + assigned */}
+                    <div style={css('display:flex;align-items:center;gap:10px;margin-top:11px;')}>
+                      <div style={css(`flex:0 0 40px;height:0;border-top:1.5px ${t.borderStyle} ${t.hasSamples ? t.shade : C.borderSoft};`)}></div>
+                      {t.hasSamples ? (
+                        <div style={css('display:flex;flex-wrap:wrap;gap:6px;flex:1;')}>
+                          {t.assigned.map((a) => (
+                            <div key={a.id} style={css(`display:flex;align-items:center;gap:6px;background:${C.bg};border:1px solid ${C.border};border-radius:5px;padding:4px 6px 4px 9px;`)}>
+                              <span style={css(`font-size:11px;color:${C.text2};max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`)}>{a.name}</span>
+                              <div onClick={a.onRemove} title="Remove" style={css(`color:${C.text3};font-size:12px;cursor:pointer;line-height:1;`)}>
+                                ×
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {t.empty && <span style={css('flex:1;font-size:11.5px;color:#3f3f45;font-style:italic;')}>drag samples here to squash into one stem</span>}
-                    <span style={css('flex:0 0 auto;font-family:ui-monospace,monospace;font-size:10px;color:#56565c;')}>{t.countLabel}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span style={css(`flex:1;font-size:11.5px;color:${C.muted};font-style:italic;`)}>drag samples here to squash into one stem</span>
+                      )}
+                      <span style={css(`flex:0 0 auto;font-family:ui-monospace,monospace;font-size:10px;color:${C.muted};`)}>{t.countLabel}</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ),
+              )}
             </div>
           </section>
         </div>
 
         {/* ============ EXPORT MODAL ============ */}
         {st.exportOpen && (
-          <div onClick={() => this.closeExport()} style={css('position:fixed;inset:0;z-index:40;background:rgba(4,4,6,0.78);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px);')}>
-            <div onClick={(e) => e.stopPropagation()} style={css('width:540px;max-height:84vh;display:flex;flex-direction:column;background:#121214;border:1px solid #2c2c30;border-radius:12px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,0.6);')}>
-              <div style={css('display:flex;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid #1f1f22;')}>
-                <span style={css('font-family:ui-monospace,monospace;font-size:11px;letter-spacing:2px;color:#e9e9ec;')}>EXPORT{NBSP}STEMS</span>
+          <div onClick={() => this.closeExport()} style={css('position:fixed;inset:0;z-index:40;background:rgba(3,3,5,0.8);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px);')}>
+            <div onClick={(e) => e.stopPropagation()} style={css(`width:540px;max-height:84vh;display:flex;flex-direction:column;background:${C.panel};border:1px solid ${C.border};border-radius:12px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,0.6);`)}>
+              <div style={css(`display:flex;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid ${C.borderSoft};`)}>
+                <span style={css('font-family:ui-monospace,monospace;font-size:11px;letter-spacing:2px;color:#ffffff;')}>EXPORT{NBSP}STEMS</span>
                 <div style={css('flex:1;')}></div>
-                <div onClick={() => this.closeExport()} style={css('color:#7a7a80;font-size:18px;cursor:pointer;line-height:1;')}>
+                <div onClick={() => this.closeExport()} style={css(`color:${C.text3};font-size:18px;cursor:pointer;line-height:1;`)}>
                   ×
                 </div>
               </div>
@@ -674,8 +928,8 @@ export default class StemSquash extends Component<Props, State> {
                 <>
                   <div style={css('padding:18px 22px;overflow-y:auto;')} className="ss-scroll">
                     <div style={css('display:flex;align-items:center;gap:14px;margin-bottom:18px;')}>
-                      <span style={css('font-family:ui-monospace,monospace;font-size:10px;letter-spacing:1px;color:#6c6c72;width:64px;')}>FORMAT</span>
-                      <div style={css('display:flex;gap:4px;background:#0c0c0e;border:1px solid #26262a;border-radius:8px;padding:3px;')}>
+                      <span style={css(`font-family:ui-monospace,monospace;font-size:10px;letter-spacing:1px;color:${C.text3};width:64px;`)}>FORMAT</span>
+                      <div style={css(`display:flex;gap:4px;background:${C.bg};border:1px solid ${C.border};border-radius:8px;padding:3px;`)}>
                         {formatOptions.map((f) => (
                           <button key={f.label} onClick={f.onSelect} style={css(f.style)}>
                             {f.label}
@@ -684,29 +938,29 @@ export default class StemSquash extends Component<Props, State> {
                       </div>
                     </div>
                     <div style={css('display:flex;align-items:center;gap:14px;margin-bottom:6px;')}>
-                      <span style={css('font-family:ui-monospace,monospace;font-size:10px;letter-spacing:1px;color:#6c6c72;width:64px;')}>PROCESS</span>
-                      <span style={css('font-size:12px;color:#9a9aa0;')}>
+                      <span style={css(`font-family:ui-monospace,monospace;font-size:10px;letter-spacing:1px;color:${C.text3};width:64px;`)}>PROCESS</span>
+                      <span style={css(`font-size:12px;color:${C.text2};`)}>
                         Overlay-mix{NBSP}·{NBSP}normalize to −0.3{NBSP}dB
                       </span>
                     </div>
 
-                    <div style={css('margin-top:18px;border-top:1px solid #1f1f22;padding-top:14px;')}>
-                      <div style={css('font-family:ui-monospace,monospace;font-size:10px;letter-spacing:1px;color:#6c6c72;margin-bottom:10px;')}>
+                    <div style={css(`margin-top:18px;border-top:1px solid ${C.borderSoft};padding-top:14px;`)}>
+                      <div style={css(`font-family:ui-monospace,monospace;font-size:10px;letter-spacing:1px;color:${C.text3};margin-bottom:10px;`)}>
                         OUTPUT{NBSP}·{NBSP}{String(outs.length)} FILES → ./{st.projectName}/
                       </div>
                       {outputsView.map((o, k) => (
-                        <div key={k} style={css('display:flex;align-items:center;gap:10px;padding:9px 11px;background:#0c0c0e;border:1px solid #202024;border-radius:7px;margin-bottom:7px;')}>
+                        <div key={k} style={css(`display:flex;align-items:center;gap:10px;padding:9px 11px;background:${C.bg};border:1px solid ${C.border};border-radius:7px;margin-bottom:7px;`)}>
                           <div style={css(o.swatch)}></div>
-                          <span style={css('font-family:ui-monospace,monospace;font-size:12px;color:#ededf0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;')}>{o.file}</span>
-                          <span style={css('font-family:ui-monospace,monospace;font-size:10px;color:#5e5e64;')}>{o.srcLabel}</span>
+                          <span style={css(`font-family:ui-monospace,monospace;font-size:12px;color:${C.text};flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`)}>{o.file}</span>
+                          <span style={css(`font-family:ui-monospace,monospace;font-size:10px;color:${C.muted};`)}>{o.srcLabel}</span>
                         </div>
                       ))}
-                      {outs.length === 0 && <div style={css('color:#46464c;font-size:12.5px;padding:20px;text-align:center;')}>No tracks have samples assigned yet.</div>}
+                      {outs.length === 0 && <div style={css(`color:${C.text3};font-size:12.5px;padding:20px;text-align:center;`)}>No tracks have samples assigned yet.</div>}
                     </div>
                   </div>
-                  <div style={css('display:flex;gap:10px;padding:16px 22px;border-top:1px solid #1f1f22;')}>
+                  <div style={css(`display:flex;gap:10px;padding:16px 22px;border-top:1px solid ${C.borderSoft};`)}>
                     <div style={css('flex:1;')}></div>
-                    <button onClick={() => this.closeExport()} style={css('background:transparent;border:1px solid #2c2c30;border-radius:7px;color:#9a9aa0;font-size:12.5px;padding:9px 16px;cursor:pointer;')}>
+                    <button onClick={() => this.closeExport()} style={css(`background:transparent;border:1px solid ${C.border};border-radius:7px;color:${C.text2};font-size:12.5px;padding:9px 16px;cursor:pointer;`)}>
                       Cancel
                     </button>
                     <button onClick={() => this.runExport()} style={css(runBtnStyle)}>
@@ -731,19 +985,19 @@ export default class StemSquash extends Component<Props, State> {
               {/* DONE */}
               {st.exportPhase === 'done' && (
                 <div style={css('padding:34px 22px;text-align:center;')}>
-                  <div style={css('width:48px;height:48px;border:1.5px solid #e9e9ec;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px auto;font-size:22px;color:#e9e9ec;')}>✓</div>
-                  <div style={css('font-size:15px;color:#f2f2f4;font-weight:500;margin-bottom:6px;')}>Squashed {String(outs.length)} stems</div>
-                  <div style={css('font-family:ui-monospace,monospace;font-size:11px;color:#6c6c72;line-height:1.7;')}>
+                  <div style={css('width:48px;height:48px;border:1.5px solid #ffffff;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px auto;font-size:22px;color:#ffffff;')}>✓</div>
+                  <div style={css(`font-size:15px;color:${C.text};font-weight:500;margin-bottom:6px;`)}>Squashed {String(outs.length)} stems</div>
+                  <div style={css(`font-family:ui-monospace,monospace;font-size:11px;color:${C.text3};line-height:1.7;`)}>
                     written to ./{st.projectName}/
                     <br />
                     ready for Octatrack import
                   </div>
                   {st.exportError ? (
-                    <div style={css('margin-top:14px;font-size:10.5px;color:#c98a8a;font-style:italic;')}>export error · {st.exportError}</div>
+                    <div style={css('margin-top:14px;font-size:10.5px;color:#d79a9a;font-style:italic;')}>export error · {st.exportError}</div>
                   ) : (
-                    <div style={css('margin-top:14px;font-size:10.5px;color:#3f3f45;font-style:italic;')}>{(st.projectName || 'stems') + '.zip'} downloaded · overlay-mixed & normalized</div>
+                    <div style={css(`margin-top:14px;font-size:10.5px;color:${C.muted};font-style:italic;`)}>{(st.projectName || 'stems') + '.zip'} downloaded · overlay-mixed & normalized</div>
                   )}
-                  <button onClick={() => this.closeExport()} style={css('margin-top:22px;background:#e9e9ec;border:none;border-radius:7px;color:#0b0b0c;font-size:12.5px;font-weight:600;padding:10px 24px;cursor:pointer;')}>
+                  <button onClick={() => this.closeExport()} style={css('margin-top:22px;background:#ffffff;border:none;border-radius:7px;color:#0a0a0b;font-size:12.5px;font-weight:600;padding:10px 24px;cursor:pointer;')}>
                     Done
                   </button>
                 </div>
