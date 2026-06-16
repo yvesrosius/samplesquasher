@@ -65,8 +65,10 @@ the project-site URL:
 
 **https://yvesrosius.github.io/samplesquasher/**
 
-The workflow enables Pages automatically (`actions/configure-pages` with
-`enablement: true`). If the first run can't enable it for permission reasons,
-turn it on once under **Settings → Pages → Build and deployment → Source:
-GitHub Actions**, then re-run the workflow.
+One-time setup (the workflow's token can't enable Pages itself):
+
+1. Make the repository **public** (Pages on a private repo needs a paid plan).
+2. **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+
+After that, every push to the default branch builds and publishes automatically.
 
