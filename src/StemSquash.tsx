@@ -348,7 +348,8 @@ export default class StemSquash extends Component<Props, State> {
     return `M ${a.x} ${a.y} C ${mx} ${a.y} ${mx} ${b.y} ${b.x} ${b.y}`;
   }
   groupCollapsed(tid: string, len: number) {
-    return len > 1 && (this.state.collapsed[tid] ?? true);
+    // Linked groups start expanded; folding is opt-in per group.
+    return len > 1 && (this.state.collapsed[tid] ?? false);
   }
   measure() {
     const root = this.rootRef.current;
@@ -413,7 +414,7 @@ export default class StemSquash extends Component<Props, State> {
     });
   };
   toggleCollapse = (tid: string) => {
-    this.setState((st) => ({ collapsed: { ...st.collapsed, [tid]: !(st.collapsed[tid] ?? true) } }));
+    this.setState((st) => ({ collapsed: { ...st.collapsed, [tid]: !(st.collapsed[tid] ?? false) } }));
   };
   setTrackName(id: string, v: string) {
     this.setState((st) => ({ tracks: st.tracks.map((t) => (t.id === id ? { ...t, name: v } : t)) }));
