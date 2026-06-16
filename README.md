@@ -9,17 +9,24 @@ named cleanly so the resulting files import tidily.
 
 ## How it works
 
-- **Left — Samples.** Every loaded sample shows a waveform and a preview play
-  button (animated playhead; real audio for files added via **+ Add files**).
-- **Drag the ◦ dot** on a sample onto a track card to link it. A connector line
-  is drawn and the sample jumps into that track's group, sorted directly across
-  from its track.
+- **Left — Samples.** Every loaded sample shows a real peak waveform and a
+  preview play / stop button. Click anywhere on a waveform to **scrub** to that
+  point (it seeks the real audio); the playhead sweeps as it plays.
+- **Drag a whole sample card** onto a track card to link it — the entire card is
+  the grab handle, not just the connector dot. A patterned connector line is
+  drawn and the sample jumps into that track's group.
+- **Samples linked to the same track collapse into one stacked card** so a busy
+  list stays tidy; click the stack (or the ▶ on its group header) to unfold and
+  manage the individual samples, then fold it back up.
 - Since the UI is pure black & white, **each track gets its own line pattern +
   grey tone** (solid / dashed / dotted …) as the wayfinding system — mirrored on
   the track's swatch and on the connector line.
-- **Right — Tracks.** Name each track, or pick from presets (Drums, Percs,
-  Hats, Cymbals, Bass, Sub, Lead, Pad, Keys, Vocals, FX). An LED lights when a
-  track has samples assigned.
+- **Right — Tracks.** Name each track with the combined name-and-preset field
+  (presets: Drums, Percs, Hats, Cymbals, Bass, Sub, Lead, Pad, Keys, Vocals,
+  FX). An LED lights when a track has samples assigned.
+- **T8 master.** Toggle **T8 master** in the header to treat the last track as
+  the master bus — it is shown disabled and is excluded from drops, counts and
+  the export.
 - **Export.** Choose **16-bit / 24-bit / source**, review the exact output files
   named `<Project> - <Track name>.wav`, and run the export. Each track is
   rendered for real, entirely in the browser:
@@ -39,6 +46,9 @@ named cleanly so the resulting files import tidily.
   is already uncompressed, so deflating it would add weight for no real gain).
 - Each added file is decoded once on load to derive its real duration and a
   real peak waveform; that decoded buffer is cached and reused at export time.
+  The waveform peak scan is bounded (a fixed sample budget with a stride), so a
+  long stem analyzes about as fast as a short one and the UI stays responsive
+  when many or long samples are loaded at once.
 
 This app is a faithful implementation of the **Stem Squash** design handed off
 from [Claude Design](https://claude.ai/design), with the export wired up for

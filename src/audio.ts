@@ -59,25 +59,35 @@ async function decodeSample(ctx: OfflineAudioContext, sample: SampleAudio): Prom
   return buf;
 }
 
-/** Peak-summary waveform: `n` bars sized to fit the design's 100×28 viewBox. */
+/**
+ * Peak-summary waveform: `n` bars sized to fit the design's 100×28 viewBox.
+ *
+ * Long files are scanned with a stride so the total work is bounded
+ * (~`MAX_SCAN` samples) regardless of duration — a 10-minute stem analyzes in
+ * roughly the same time as a one-bar loop, which keeps the UI responsive when
+ * many / long samples are loaded at once.
+ */
+const MAX_SCAN = 12000;
 function peaksToBars(buf: AudioBuffer, n: number): Bar[] {
   const ch = buf.getChannelData(0);
   const len = buf.length;
   const slot = 100 / n;
-  const w = slot * 0.5;
+  const w = slot * 0.62;
   const block = Math.max(1, Math.floor(len / n));
+  const stride = Math.max(1, Math.floor(len / MAX_SCAN));
   const bars: Bar[] = [];
   for (let i = 0; i < n; i++) {
     let peak = 0;
     const start = i * block;
     const end = Math.min(len, start + block);
-    for (let j = start; j < end; j++) {
+    for (let j = start; j < end; j += stride) {
       const a = Math.abs(ch[j]);
       if (a > peak) peak = a;
     }
-    const f = Math.max(0.04, Math.min(1, peak));
+    // Perceptual curve so quiet detail stays visible against louder peaks.
+    const f = Math.max(0.06, Math.min(1, Math.pow(peak, 0.7)));
     const h = +(f * 24).toFixed(2);
-    bars.push({ x: +(i * slot + slot * 0.25).toFixed(2), y: +(14 - h / 2).toFixed(2), w: +w.toFixed(2), h });
+    bars.push({ x: +(i * slot + (slot - w) / 2).toFixed(2), y: +(14 - h / 2).toFixed(2), w: +w.toFixed(2), h });
   }
   return bars;
 }

@@ -38,9 +38,38 @@ button {
   background: transparent;
 }
 input::placeholder {
-  color: #56565c;
+  color: #6a6a72;
 }
 select option {
   background: #161618;
   color: #e9e9ec;
+}
+
+/* Loading shimmer for waveforms still being analyzed. */
+@keyframes ssPulse {
+  0%,
+  100% {
+    opacity: 0.22;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.ss-loading {
+  animation: ssPulse 1.1s ease-in-out infinite;
+}
+
+/* Collapse / expand animation for grouped, linked samples. */
+@keyframes ssUnfold {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.ss-unfold {
+  animation: ssUnfold 0.14s ease-out;
 }
