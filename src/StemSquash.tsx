@@ -366,7 +366,7 @@ export default class StemSquash extends Component<Props, State> {
       if (list && list.length)
         groups.push({ label: ('T' + (i + 1) + '  ' + (t.name || 'UNTITLED')).toUpperCase(), color: this.SHADE[i % 8], tid: t.id, idx: i, list });
     });
-    if (unassigned.length) groups.push({ label: 'UNASSIGNED', color: '#56565c', tid: null, list: unassigned });
+    if (unassigned.length) groups.push({ label: 'UNASSIGNED', color: '#7e7e86', tid: null, list: unassigned });
 
     interface SampleVM {
       id: string; name: string; time: string; bars: Bar[]; waveColor: string;
@@ -386,7 +386,7 @@ export default class StemSquash extends Component<Props, State> {
           name: s.name,
           time: this.fmt(s.dur),
           bars: s.bars,
-          waveColor: linked ? '#6a6a70' : '#48484e',
+          waveColor: linked ? '#828289' : '#62626a',
           playing,
           playheadX: +(st.playPos * 100).toFixed(2),
           playGlyph: playing ? '■' : '▶',
@@ -398,8 +398,8 @@ export default class StemSquash extends Component<Props, State> {
           headerColor: g.color,
           headerCount: idx === 0 ? String(g.list.length) : '',
           rowStyle: `display:flex;align-items:center;gap:12px;padding:9px 8px 9px 10px;border-radius:8px;margin-bottom:3px;background:${isDragSrc ? '#17171a' : 'transparent'};border:1px solid ${isDragSrc ? '#3a3a40' : 'transparent'};transition:background .08s;`,
-          playStyle: `flex:0 0 auto;width:30px;height:30px;border-radius:50%;border:1px solid ${playing ? '#e9e9ec' : '#2e2e33'};background:${playing ? '#e9e9ec' : 'transparent'};color:${playing ? '#0b0b0c' : '#cfcfd4'};font-size:9px;display:flex;align-items:center;justify-content:center;cursor:pointer;padding-left:${playing ? '0' : '1px'};`,
-          dotStyle: `width:13px;height:13px;border-radius:50%;border:1.5px solid ${linked || isDragSrc ? '#e9e9ec' : '#5a5a60'};background:${linked || isDragSrc ? '#e9e9ec' : 'transparent'};cursor:crosshair;`,
+          playStyle: `flex:0 0 auto;width:30px;height:30px;border-radius:50%;border:1px solid ${playing ? '#e9e9ec' : '#3a3a40'};background:${playing ? '#e9e9ec' : 'transparent'};color:${playing ? '#0b0b0c' : '#cfcfd4'};font-size:9px;display:flex;align-items:center;justify-content:center;cursor:pointer;padding-left:${playing ? '0' : '1px'};`,
+          dotStyle: `width:13px;height:13px;border-radius:50%;border:1.5px solid ${linked || isDragSrc ? '#e9e9ec' : '#7e7e86'};background:${linked || isDragSrc ? '#e9e9ec' : 'transparent'};cursor:crosshair;`,
         });
       });
     });
@@ -424,7 +424,7 @@ export default class StemSquash extends Component<Props, State> {
         id: t.id,
         label: 'T' + (i + 1),
         name: t.name,
-        idxColor: has ? shade : '#5a5a60',
+        idxColor: has ? shade : '#7e7e86',
         onName: (e) => this.setTrackName(t.id, e.target.value),
         onPreset: (e) => {
           const v = e.target.value;
@@ -434,8 +434,8 @@ export default class StemSquash extends Component<Props, State> {
         hasSamples: has,
         empty: !has,
         countLabel: has ? assigned.length + '→ 1' : '—',
-        cardStyle: `position:relative;background:${hi ? '#1a1a1e' : '#141416'};border:1px solid ${hi ? '#e9e9ec' : has ? '#2e2e33' : '#222226'};border-radius:10px;padding:14px 16px 14px 16px;transition:border-color .1s,background .1s;`,
-        dotStyle: `position:absolute;left:-7px;top:18px;width:13px;height:13px;border-radius:50%;border:1.5px solid ${has ? '#e9e9ec' : '#5a5a60'};background:${has ? shade : '#0d0d0f'};`,
+        cardStyle: `position:relative;background:${hi ? '#1a1a1e' : '#141416'};border:1px solid ${hi ? '#e9e9ec' : has ? '#3a3a40' : '#33333a'};border-radius:10px;padding:14px 16px 14px 16px;transition:border-color .1s,background .1s;`,
+        dotStyle: `position:absolute;left:-7px;top:18px;width:13px;height:13px;border-radius:50%;border:1.5px solid ${has ? '#e9e9ec' : '#7e7e86'};background:${has ? shade : '#0d0d0f'};`,
         ledStyle: `width:7px;height:7px;border-radius:50%;background:${has ? '#e9e9ec' : 'transparent'};border:1px solid ${has ? '#e9e9ec' : '#3a3a40'};box-shadow:${has ? '0 0 6px rgba(255,255,255,0.5)' : 'none'};`,
         swatchBorder: `border-top:1.5px ${borderStyle} ${has ? shade : '#2a2a2e'};`,
       };
@@ -452,7 +452,7 @@ export default class StemSquash extends Component<Props, State> {
         srcLabel: `${o.srcCount} src · ${fmtMeta[st.format]}`,
         swatch: `flex:0 0 auto;width:24px;height:0;border-top:1.5px ${this.DASH[o.idx % 8] === '' ? 'solid' : this.DASH[o.idx % 8].startsWith('1.5') || this.DASH[o.idx % 8].startsWith('2.5') ? 'dotted' : 'dashed'} ${this.SHADE[o.idx % 8]};`,
         tick: done ? '✓' : cur ? '·' : '·',
-        tickColor: done ? '#e9e9ec' : cur ? '#9a9aa0' : '#3f3f45',
+        tickColor: done ? '#e9e9ec' : cur ? '#aaaab1' : '#7c7c86',
       };
     });
     const fOpt = (key: Format, label: string) => {
@@ -460,7 +460,7 @@ export default class StemSquash extends Component<Props, State> {
       return {
         label,
         onSelect: () => this.setState({ format: key }),
-        style: `background:${a ? '#e9e9ec' : 'transparent'};color:${a ? '#0b0b0c' : '#9a9aa0'};border:none;border-radius:6px;font-size:11.5px;font-weight:${a ? '600' : '400'};padding:6px 13px;cursor:pointer;`,
+        style: `background:${a ? '#e9e9ec' : 'transparent'};color:${a ? '#0b0b0c' : '#aaaab1'};border:none;border-radius:6px;font-size:11.5px;font-weight:${a ? '600' : '400'};padding:6px 13px;cursor:pointer;`,
       };
     };
     const formatOptions = [fOpt('16', '16-bit'), fOpt('24', '24-bit'), fOpt('source', 'Source')];
@@ -472,7 +472,7 @@ export default class StemSquash extends Component<Props, State> {
     const uiSelect = drag ? 'none' : 'auto';
     const summary = `${linked}/${st.samples.length} linked  ·  ${used}/${st.tracks.length} tracks`;
     const exportBtnLabel = exportOK ? `Export → ${used} stems` : 'Export';
-    const exportBtnStyle = `white-space:nowrap;background:${exportOK ? '#e9e9ec' : '#1c1c1f'};color:${exportOK ? '#0b0b0c' : '#56565c'};border:1px solid ${exportOK ? '#e9e9ec' : '#2a2a2e'};border-radius:7px;font-size:12.5px;font-weight:600;padding:9px 16px;cursor:${exportOK ? 'pointer' : 'not-allowed'};`;
+    const exportBtnStyle = `white-space:nowrap;background:${exportOK ? '#e9e9ec' : '#1c1c1f'};color:${exportOK ? '#0b0b0c' : '#7e7e86'};border:1px solid ${exportOK ? '#e9e9ec' : '#2a2a2e'};border-radius:7px;font-size:12.5px;font-weight:600;padding:9px 16px;cursor:${exportOK ? 'pointer' : 'not-allowed'};`;
     const runBtnStyle = `background:#e9e9ec;border:none;border-radius:7px;color:#0b0b0c;font-size:12.5px;font-weight:600;padding:9px 18px;cursor:pointer;`;
 
     return (
@@ -485,16 +485,16 @@ export default class StemSquash extends Component<Props, State> {
         {/* ============ HEADER ============ */}
         <header style={css('flex:0 0 auto;height:60px;display:flex;align-items:center;gap:22px;padding:0 22px;border-bottom:1px solid #1f1f22;background:#101012;')}>
           <div style={css('display:flex;align-items:center;gap:11px;')}>
-            <div style={css('width:26px;height:26px;border:1.5px solid #6c6c72;border-radius:5px;display:flex;align-items:center;justify-content:center;')}>
+            <div style={css('width:26px;height:26px;border:1.5px solid #92929a;border-radius:5px;display:flex;align-items:center;justify-content:center;')}>
               <div style={css('width:11px;height:11px;border-radius:50%;background:#e9e9ec;')}></div>
             </div>
             <div style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12px;letter-spacing:2.5px;color:#e9e9ec;")}>STEM{NBSP}SQUASH</div>
           </div>
 
-          <div style={css('width:1px;height:26px;background:#26262a;')}></div>
+          <div style={css('width:1px;height:26px;background:#36363c;')}></div>
 
           <label style={css('display:flex;align-items:center;gap:10px;')}>
-            <span style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:9.5px;letter-spacing:1.5px;color:#6c6c72;")}>PROJECT</span>
+            <span style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:9.5px;letter-spacing:1.5px;color:#92929a;")}>PROJECT</span>
             <input
               value={st.projectName}
               onChange={(e) => this.setState({ projectName: e.target.value })}
@@ -506,7 +506,7 @@ export default class StemSquash extends Component<Props, State> {
 
           <div style={css('flex:1 1 auto;')}></div>
 
-          <div style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;letter-spacing:0.5px;color:#7a7a80;")}>{summary}</div>
+          <div style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;letter-spacing:0.5px;color:#9c9ca4;")}>{summary}</div>
 
           <button onClick={() => this.openExport()} style={css(exportBtnStyle)}>
             {exportBtnLabel}
@@ -525,8 +525,8 @@ export default class StemSquash extends Component<Props, State> {
           {/* ===== LEFT : SAMPLES ===== */}
           <section onScroll={() => this.scheduleMeasure()} className="ss-scroll" style={css('flex:1 1 auto;min-width:400px;overflow-y:auto;background:#0d0d0f;border-right:1px solid #161619;')}>
             <div style={css('position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:12px;padding:13px 20px 12px 20px;background:#0d0d0f;border-bottom:1px solid #1a1a1d;')}>
-              <span style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:2px;color:#8a8a90;")}>SAMPLES</span>
-              <span style={css('font-family:ui-monospace,monospace;font-size:10px;color:#56565c;')}>{String(st.samples.length)}</span>
+              <span style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:2px;color:#a6a6ad;")}>SAMPLES</span>
+              <span style={css('font-family:ui-monospace,monospace;font-size:10px;color:#7e7e86;')}>{String(st.samples.length)}</span>
               <div style={css('flex:1;')}></div>
               <button onClick={() => this.fileRef.current && this.fileRef.current.click()} style={css('display:flex;align-items:center;gap:6px;background:transparent;border:1px solid #2c2c30;border-radius:6px;color:#cfcfd4;font-size:11.5px;padding:6px 11px;cursor:pointer;')}>
                 + Add files
@@ -541,7 +541,7 @@ export default class StemSquash extends Component<Props, State> {
                     <div style={css('display:flex;align-items:center;gap:9px;padding:14px 6px 7px 6px;')}>
                       <span style={css(`font-family:ui-monospace,monospace;font-size:9.5px;letter-spacing:1.6px;color:${s.headerColor};`)}>{s.header}</span>
                       <div style={css('flex:1;height:1px;background:#1c1c20;')}></div>
-                      <span style={css('font-family:ui-monospace,monospace;font-size:9.5px;color:#46464c;')}>{s.headerCount}</span>
+                      <span style={css('font-family:ui-monospace,monospace;font-size:9.5px;color:#78787f;')}>{s.headerCount}</span>
                     </div>
                   )}
 
@@ -554,7 +554,7 @@ export default class StemSquash extends Component<Props, State> {
                       <div style={css('display:flex;align-items:baseline;gap:8px;')}>
                         <span style={css('font-size:13px;color:#ededf0;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;')}>{s.name}</span>
                         <div style={css('flex:1;')}></div>
-                        <span style={css('font-family:ui-monospace,monospace;font-size:10px;color:#5e5e64;flex:0 0 auto;')}>{s.time}</span>
+                        <span style={css('font-family:ui-monospace,monospace;font-size:10px;color:#8a8a91;flex:0 0 auto;')}>{s.time}</span>
                       </div>
                       <div style={css('margin-top:5px;height:28px;')}>
                         <svg viewBox="0 0 100 28" preserveAspectRatio="none" style={css('width:100%;height:28px;display:block;')}>
@@ -569,7 +569,7 @@ export default class StemSquash extends Component<Props, State> {
                     <div style={css('display:flex;flex-direction:column;align-items:center;gap:6px;flex:0 0 auto;padding-left:4px;')}>
                       <div data-dot={'s:' + s.id} onMouseDown={s.onDotDown} title="Drag to a track" style={css(s.dotStyle)}></div>
                       {s.linked && (
-                        <div onClick={s.onUnlink} title="Unlink" style={css('width:14px;height:14px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#6c6c72;font-size:12px;cursor:pointer;line-height:1;')}>
+                        <div onClick={s.onUnlink} title="Unlink" style={css('width:14px;height:14px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#92929a;font-size:12px;cursor:pointer;line-height:1;')}>
                           ×
                         </div>
                       )}
@@ -579,7 +579,7 @@ export default class StemSquash extends Component<Props, State> {
               ))}
 
               {st.samples.length === 0 && (
-                <div style={css('text-align:center;color:#46464c;font-size:12.5px;padding:60px 20px;line-height:1.7;')}>
+                <div style={css('text-align:center;color:#78787f;font-size:12.5px;padding:60px 20px;line-height:1.7;')}>
                   No samples loaded.
                   <br />
                   Add your exported stems to begin.
@@ -594,11 +594,11 @@ export default class StemSquash extends Component<Props, State> {
           {/* ===== RIGHT : TRACKS ===== */}
           <section onScroll={() => this.scheduleMeasure()} className="ss-scroll" style={css('flex:0 0 452px;overflow-y:auto;background:#0d0d0f;border-left:1px solid #161619;')}>
             <div style={css('position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:12px;padding:13px 20px 12px 22px;background:#0d0d0f;border-bottom:1px solid #1a1a1d;')}>
-              <span style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:2px;color:#8a8a90;")}>
+              <span style={css("font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:2px;color:#a6a6ad;")}>
                 OCTATRACK{NBSP}·{NBSP}TRACKS
               </span>
               <div style={css('flex:1;')}></div>
-              <span style={css('font-family:ui-monospace,monospace;font-size:10px;color:#56565c;')}>{String(used)} active</span>
+              <span style={css('font-family:ui-monospace,monospace;font-size:10px;color:#7e7e86;')}>{String(used)} active</span>
             </div>
 
             <div style={css('padding:12px 18px 40px 18px;display:flex;flex-direction:column;gap:11px;')}>
@@ -618,10 +618,10 @@ export default class StemSquash extends Component<Props, State> {
                       onChange={t.onName}
                       placeholder="name this track"
                       spellCheck={false}
-                      style={css('flex:1;min-width:0;background:transparent;border:none;border-bottom:1px solid #26262a;color:#f2f2f4;font-size:14px;font-weight:500;padding:4px 2px;outline:none;')}
+                      style={css('flex:1;min-width:0;background:transparent;border:none;border-bottom:1px solid #36363c;color:#f2f2f4;font-size:14px;font-weight:500;padding:4px 2px;outline:none;')}
                     />
 
-                    <select value="" onChange={t.onPreset} style={css('flex:0 0 auto;background:#141416;border:1px solid #2a2a2e;border-radius:6px;color:#9a9aa0;font-size:11px;padding:6px 7px;outline:none;cursor:pointer;')}>
+                    <select value="" onChange={t.onPreset} style={css('flex:0 0 auto;background:#141416;border:1px solid #2a2a2e;border-radius:6px;color:#aaaab1;font-size:11px;padding:6px 7px;outline:none;cursor:pointer;')}>
                       <option value="" disabled>
                         preset
                       </option>
@@ -641,15 +641,15 @@ export default class StemSquash extends Component<Props, State> {
                         {t.assigned.map((a) => (
                           <div key={a.id} style={css('display:flex;align-items:center;gap:6px;background:#141416;border:1px solid #2a2a2e;border-radius:5px;padding:4px 6px 4px 9px;')}>
                             <span style={css('font-size:11px;color:#cfcfd4;max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;')}>{a.name}</span>
-                            <div onClick={a.onRemove} title="Remove" style={css('color:#5e5e64;font-size:12px;cursor:pointer;line-height:1;')}>
+                            <div onClick={a.onRemove} title="Remove" style={css('color:#8a8a91;font-size:12px;cursor:pointer;line-height:1;')}>
                               ×
                             </div>
                           </div>
                         ))}
                       </div>
                     )}
-                    {t.empty && <span style={css('flex:1;font-size:11.5px;color:#3f3f45;font-style:italic;')}>drag samples here to squash into one stem</span>}
-                    <span style={css('flex:0 0 auto;font-family:ui-monospace,monospace;font-size:10px;color:#56565c;')}>{t.countLabel}</span>
+                    {t.empty && <span style={css('flex:1;font-size:11.5px;color:#7c7c86;font-style:italic;')}>drag samples here to squash into one stem</span>}
+                    <span style={css('flex:0 0 auto;font-family:ui-monospace,monospace;font-size:10px;color:#7e7e86;')}>{t.countLabel}</span>
                   </div>
                 </div>
               ))}
@@ -664,7 +664,7 @@ export default class StemSquash extends Component<Props, State> {
               <div style={css('display:flex;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid #1f1f22;')}>
                 <span style={css('font-family:ui-monospace,monospace;font-size:11px;letter-spacing:2px;color:#e9e9ec;')}>EXPORT{NBSP}STEMS</span>
                 <div style={css('flex:1;')}></div>
-                <div onClick={() => this.closeExport()} style={css('color:#7a7a80;font-size:18px;cursor:pointer;line-height:1;')}>
+                <div onClick={() => this.closeExport()} style={css('color:#9c9ca4;font-size:18px;cursor:pointer;line-height:1;')}>
                   ×
                 </div>
               </div>
@@ -674,8 +674,8 @@ export default class StemSquash extends Component<Props, State> {
                 <>
                   <div style={css('padding:18px 22px;overflow-y:auto;')} className="ss-scroll">
                     <div style={css('display:flex;align-items:center;gap:14px;margin-bottom:18px;')}>
-                      <span style={css('font-family:ui-monospace,monospace;font-size:10px;letter-spacing:1px;color:#6c6c72;width:64px;')}>FORMAT</span>
-                      <div style={css('display:flex;gap:4px;background:#0c0c0e;border:1px solid #26262a;border-radius:8px;padding:3px;')}>
+                      <span style={css('font-family:ui-monospace,monospace;font-size:10px;letter-spacing:1px;color:#92929a;width:64px;')}>FORMAT</span>
+                      <div style={css('display:flex;gap:4px;background:#0c0c0e;border:1px solid #36363c;border-radius:8px;padding:3px;')}>
                         {formatOptions.map((f) => (
                           <button key={f.label} onClick={f.onSelect} style={css(f.style)}>
                             {f.label}
@@ -684,29 +684,29 @@ export default class StemSquash extends Component<Props, State> {
                       </div>
                     </div>
                     <div style={css('display:flex;align-items:center;gap:14px;margin-bottom:6px;')}>
-                      <span style={css('font-family:ui-monospace,monospace;font-size:10px;letter-spacing:1px;color:#6c6c72;width:64px;')}>PROCESS</span>
-                      <span style={css('font-size:12px;color:#9a9aa0;')}>
+                      <span style={css('font-family:ui-monospace,monospace;font-size:10px;letter-spacing:1px;color:#92929a;width:64px;')}>PROCESS</span>
+                      <span style={css('font-size:12px;color:#aaaab1;')}>
                         Overlay-mix{NBSP}·{NBSP}normalize to −0.3{NBSP}dB
                       </span>
                     </div>
 
                     <div style={css('margin-top:18px;border-top:1px solid #1f1f22;padding-top:14px;')}>
-                      <div style={css('font-family:ui-monospace,monospace;font-size:10px;letter-spacing:1px;color:#6c6c72;margin-bottom:10px;')}>
+                      <div style={css('font-family:ui-monospace,monospace;font-size:10px;letter-spacing:1px;color:#92929a;margin-bottom:10px;')}>
                         OUTPUT{NBSP}·{NBSP}{String(outs.length)} FILES → ./{st.projectName}/
                       </div>
                       {outputsView.map((o, k) => (
                         <div key={k} style={css('display:flex;align-items:center;gap:10px;padding:9px 11px;background:#0c0c0e;border:1px solid #202024;border-radius:7px;margin-bottom:7px;')}>
                           <div style={css(o.swatch)}></div>
                           <span style={css('font-family:ui-monospace,monospace;font-size:12px;color:#ededf0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;')}>{o.file}</span>
-                          <span style={css('font-family:ui-monospace,monospace;font-size:10px;color:#5e5e64;')}>{o.srcLabel}</span>
+                          <span style={css('font-family:ui-monospace,monospace;font-size:10px;color:#8a8a91;')}>{o.srcLabel}</span>
                         </div>
                       ))}
-                      {outs.length === 0 && <div style={css('color:#46464c;font-size:12.5px;padding:20px;text-align:center;')}>No tracks have samples assigned yet.</div>}
+                      {outs.length === 0 && <div style={css('color:#78787f;font-size:12.5px;padding:20px;text-align:center;')}>No tracks have samples assigned yet.</div>}
                     </div>
                   </div>
                   <div style={css('display:flex;gap:10px;padding:16px 22px;border-top:1px solid #1f1f22;')}>
                     <div style={css('flex:1;')}></div>
-                    <button onClick={() => this.closeExport()} style={css('background:transparent;border:1px solid #2c2c30;border-radius:7px;color:#9a9aa0;font-size:12.5px;padding:9px 16px;cursor:pointer;')}>
+                    <button onClick={() => this.closeExport()} style={css('background:transparent;border:1px solid #2c2c30;border-radius:7px;color:#aaaab1;font-size:12.5px;padding:9px 16px;cursor:pointer;')}>
                       Cancel
                     </button>
                     <button onClick={() => this.runExport()} style={css(runBtnStyle)}>
@@ -733,7 +733,7 @@ export default class StemSquash extends Component<Props, State> {
                 <div style={css('padding:34px 22px;text-align:center;')}>
                   <div style={css('width:48px;height:48px;border:1.5px solid #e9e9ec;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px auto;font-size:22px;color:#e9e9ec;')}>✓</div>
                   <div style={css('font-size:15px;color:#f2f2f4;font-weight:500;margin-bottom:6px;')}>Squashed {String(outs.length)} stems</div>
-                  <div style={css('font-family:ui-monospace,monospace;font-size:11px;color:#6c6c72;line-height:1.7;')}>
+                  <div style={css('font-family:ui-monospace,monospace;font-size:11px;color:#92929a;line-height:1.7;')}>
                     written to ./{st.projectName}/
                     <br />
                     ready for Octatrack import
@@ -741,7 +741,7 @@ export default class StemSquash extends Component<Props, State> {
                   {st.exportError ? (
                     <div style={css('margin-top:14px;font-size:10.5px;color:#c98a8a;font-style:italic;')}>export error · {st.exportError}</div>
                   ) : (
-                    <div style={css('margin-top:14px;font-size:10.5px;color:#3f3f45;font-style:italic;')}>{(st.projectName || 'stems') + '.zip'} downloaded · overlay-mixed & normalized</div>
+                    <div style={css('margin-top:14px;font-size:10.5px;color:#7c7c86;font-style:italic;')}>{(st.projectName || 'stems') + '.zip'} downloaded · overlay-mixed & normalized</div>
                   )}
                   <button onClick={() => this.closeExport()} style={css('margin-top:22px;background:#e9e9ec;border:none;border-radius:7px;color:#0b0b0c;font-size:12.5px;font-weight:600;padding:10px 24px;cursor:pointer;')}>
                     Done
